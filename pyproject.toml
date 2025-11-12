@@ -43,12 +43,24 @@ package = true
 [tool.setuptools]
 package-dir = {"" = "src"}
 
+[tool.setuptools.packages.find]
+where = ["src"]
+exclude = [
+    "frontend_workspaces*"
+]
+
 [tool.setuptools.package-data]
-"configurations" = ["**"]
-"cuga" = ["**"]
-"frontend_workspaces" = ["**"]
-"scripts" = ["**"]
-"system_tests" = ["**"]
+cuga = [
+    "configurations/**/*.toml",
+    "configurations/**/*.md",
+    "settings.toml",
+]
+frontend_workspaces = [
+    "frontend/dist/**",
+    "extension/releases/**"
+]
+scripts = ["*.py"]
+system_tests = ["**/*.py", "**/*.yaml", "**/*.sh"]
 
 
 
