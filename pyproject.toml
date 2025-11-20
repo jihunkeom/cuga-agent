@@ -55,6 +55,7 @@ cuga = [
     "configurations/**/*.md",
     "settings.toml",
     "backend/**/*.jinja2",
+    "backend/**/*.js",
 ]
 frontend_workspaces = [
     "frontend/dist/**",
