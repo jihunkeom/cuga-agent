@@ -1,8 +1,8 @@
 **Previous Subtasks**:
 {% for item in stm_all_history %}
-{{ loop.index }}. {{ item['sub_task'] }}
+{{ loop['index'] }}. {{ item['sub_task'] }}
 {% for step in item['steps'] %}
-        {{ loop.index }}. {{ step }}
+        {{ loop['index'] }}. {{ step }}
 {% endfor %}
 {% if item['final_answer'] %}
         **Final Answer**: {{item['final_answer']}}
@@ -25,7 +25,7 @@
 
 **Subtasks**:
 {%- for item in task_decomposition %}
-{{ loop.index }}. {{ item }}
+{{ loop['index'] }}. {{ item }}
 {%- endfor %}
 
 
