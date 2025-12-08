@@ -27,8 +27,6 @@ Building a domain-specific enterprise agent from scratch is complex and requires
 
 ## Why CUGA?
 
-**CUGA (ConfigUrable Generalist Agent)** is an open-source generalist agent framework from IBM Research, purpose-built for enterprise automation. Designed for developers, CUGA delivers state-of-the-art performance while remaining highly configurable for your specific domain needs.
-
 ### 🏆 Benchmark Performance
 
 CUGA achieves state-of-the-art performance on leading benchmarks:
