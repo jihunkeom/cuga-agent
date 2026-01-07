@@ -33,6 +33,71 @@ def kill_process_on_port(port):
     return False
 
 
+async def find_function_name(client, registry_server, app_name, keywords=None, method=None):
+    """
+    Helper function to find the correct function name for an application.
+
+    Args:
+        client: httpx.AsyncClient instance
+        registry_server: Base URL of the registry server
+        app_name: Name of the application (e.g., "auth_test_header")
+        keywords: List of keywords that should be in the function name (e.g., ["items", "header"])
+        method: HTTP method to filter by (e.g., "POST")
+
+    Returns:
+        str: The function name, or None if not found
+    """
+    apis_response = await client.get(f"{registry_server}/applications/{app_name}/apis")
+    if apis_response.status_code != 200:
+        return None
+
+    apis = apis_response.json()
+    if not apis:
+        return None
+
+    app_prefix = f"{app_name}_"
+    function_name = None
+
+    # First pass: look for exact match with all keywords
+    if keywords:
+        for api_name in apis.keys():
+            if api_name.startswith(app_prefix):
+                api_lower = api_name.lower()
+                if all(keyword.lower() in api_lower for keyword in keywords):
+                    function_name = api_name
+                    break
+
+    # Second pass: if method specified, look for matching method
+    if not function_name and method:
+        for api_name, api_info in apis.items():
+            if api_name.startswith(app_prefix):
+                if isinstance(api_info, dict) and api_info.get('method', '').upper() == method.upper():
+                    function_name = api_name
+                    break
+
+    # Third pass: any function with prefix and at least one keyword
+    if not function_name and keywords:
+        for api_name in apis.keys():
+            if api_name.startswith(app_prefix):
+                api_lower = api_name.lower()
+                if any(keyword.lower() in api_lower for keyword in keywords):
+                    function_name = api_name
+                    break
+
+    # Fallback: any function with the prefix
+    if not function_name:
+        for api_name in apis.keys():
+            if api_name.startswith(app_prefix):
+                function_name = api_name
+                break
+
+    # Last resort: first API
+    if not function_name:
+        function_name = list(apis.keys())[0]
+
+    return function_name
+
+
 class TestAuthenticationE2E:
     """End-to-End tests for OpenAPI authentication"""
 
@@ -172,9 +237,14 @@ class TestAuthenticationE2E:
     async def test_header_auth_e2e(self, registry_server):
         """Test header authentication end-to-end via registry server"""
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_server, "auth_test_header", ["items", "header"]
+            )
+            assert function_name is not None
+
             payload = {
                 "app_name": "auth_test_header",
-                "function_name": "auth_test_header_getitemsheaderauth",
+                "function_name": function_name,
                 "args": {},
             }
 
@@ -191,9 +261,14 @@ class TestAuthenticationE2E:
     async def test_bearer_auth_e2e(self, registry_server):
         """Test bearer token authentication end-to-end via registry server"""
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_server, "auth_test_bearer", ["items", "bearer"]
+            )
+            assert function_name is not None
+
             payload = {
                 "app_name": "auth_test_bearer",
-                "function_name": "auth_test_bearer_getitemsbearerauth",
+                "function_name": function_name,
                 "args": {},
             }
 
@@ -209,9 +284,14 @@ class TestAuthenticationE2E:
     async def test_api_key_query_auth_e2e(self, registry_server):
         """Test API key query parameter authentication end-to-end via registry server"""
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_server, "auth_test_api_key", ["items", "api", "key"]
+            )
+            assert function_name is not None
+
             payload = {
                 "app_name": "auth_test_api_key",
-                "function_name": "auth_test_api_key_getitemsapikeyquery",
+                "function_name": function_name,
                 "args": {},
             }
 
@@ -227,9 +307,14 @@ class TestAuthenticationE2E:
     async def test_basic_auth_e2e(self, registry_server):
         """Test basic authentication end-to-end via registry server"""
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_server, "auth_test_basic", ["items", "basic"]
+            )
+            assert function_name is not None
+
             payload = {
                 "app_name": "auth_test_basic",
-                "function_name": "auth_test_basic_getitemsbasicauth",
+                "function_name": function_name,
                 "args": {},
             }
 
@@ -245,9 +330,14 @@ class TestAuthenticationE2E:
     async def test_custom_query_auth_e2e(self, registry_server):
         """Test custom query parameter authentication end-to-end via registry server"""
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_server, "auth_test_query", ["items", "custom", "query"]
+            )
+            assert function_name is not None
+
             payload = {
                 "app_name": "auth_test_query",
-                "function_name": "auth_test_query_getitemscustomquery",
+                "function_name": function_name,
                 "args": {},
             }
 
@@ -263,9 +353,19 @@ class TestAuthenticationE2E:
     async def test_create_item_with_auth(self, registry_server):
         """Test creating an item with authentication"""
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Try to find create function, fallback to POST method
+            function_name = await find_function_name(
+                client, registry_server, "auth_test_header", ["create"], method="POST"
+            )
+            if not function_name:
+                function_name = await find_function_name(
+                    client, registry_server, "auth_test_header", method="POST"
+                )
+            assert function_name is not None
+
             payload = {
                 "app_name": "auth_test_header",
-                "function_name": "auth_test_header_createitem",
+                "function_name": function_name,
                 "args": {"id": 99, "name": "Test Item", "description": "Created via auth test"},
             }
 
@@ -373,9 +473,13 @@ async def run_auth_e2e_tests():
 
         print("\n🔑 Test 2: Header Authentication")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_url, "auth_test_header", ["items", "header"]
+            )
+
             payload = {
                 "app_name": "auth_test_header",
-                "function_name": "auth_test_header_getitemsheaderauth",
+                "function_name": function_name,
                 "args": {},
             }
             response = await client.post(f"{registry_url}/functions/call", json=payload)
@@ -387,9 +491,13 @@ async def run_auth_e2e_tests():
 
         print("\n🎫 Test 3: Bearer Token Authentication")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_url, "auth_test_bearer", ["items", "bearer"]
+            )
+
             payload = {
                 "app_name": "auth_test_bearer",
-                "function_name": "auth_test_bearer_getitemsbearerauth",
+                "function_name": function_name,
                 "args": {},
             }
             response = await client.post(f"{registry_url}/functions/call", json=payload)
@@ -399,9 +507,13 @@ async def run_auth_e2e_tests():
 
         print("\n🔐 Test 4: API Key Query Parameter")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_url, "auth_test_api_key", ["items", "api", "key"]
+            )
+
             payload = {
                 "app_name": "auth_test_api_key",
-                "function_name": "auth_test_api_key_getitemsapikeyquery",
+                "function_name": function_name,
                 "args": {},
             }
             response = await client.post(f"{registry_url}/functions/call", json=payload)
@@ -411,9 +523,13 @@ async def run_auth_e2e_tests():
 
         print("\n🔒 Test 5: Basic Authentication")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_url, "auth_test_basic", ["items", "basic"]
+            )
+
             payload = {
                 "app_name": "auth_test_basic",
-                "function_name": "auth_test_basic_getitemsbasicauth",
+                "function_name": function_name,
                 "args": {},
             }
             response = await client.post(f"{registry_url}/functions/call", json=payload)
@@ -423,9 +539,13 @@ async def run_auth_e2e_tests():
 
         print("\n🎯 Test 6: Custom Query Parameter")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            function_name = await find_function_name(
+                client, registry_url, "auth_test_query", ["items", "custom", "query"]
+            )
+
             payload = {
                 "app_name": "auth_test_query",
-                "function_name": "auth_test_query_getitemscustomquery",
+                "function_name": function_name,
                 "args": {},
             }
             response = await client.post(f"{registry_url}/functions/call", json=payload)

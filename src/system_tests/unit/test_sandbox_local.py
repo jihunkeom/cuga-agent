@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """
+DEPRECATED: This test is no longer needed as we have moved to using the E2B sandbox.
 Test for sandbox local execution with simple code
 
 Tests basic functionality of running code in the local sandbox environment.

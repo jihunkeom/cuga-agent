@@ -3,7 +3,7 @@ import pytest
 from unittest.mock import Mock
 
 from cuga.backend.cuga_graph.state.agent_state import AgentState, VariablesManager
-from .code_executor import CodeExecutor
+from cuga.backend.cuga_graph.nodes.cuga_lite.executors import CodeExecutor
 
 
 @pytest.fixture

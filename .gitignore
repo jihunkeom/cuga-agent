@@ -19,6 +19,7 @@ backup_*
 test_results.json
 vendor
 logs/
+.milvus*
 dist_cuga
 agent-analytics
 trajectory

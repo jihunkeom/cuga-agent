@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Any, Dict, List, Literal, Optional, TypeAlias
+from typing import Any, Callable, Dict, List, Literal, Optional, TypeAlias
 from urllib.parse import urlencode
 
 import requests
@@ -29,6 +29,61 @@ def sanitize_tool_name(name: str) -> str:
     s = re.sub(r'[ /.\-{}:?&=%]', '_', s)
     s = re.sub(r'__+', '_', s)
     return s.strip('_') or "unnamed_tool"
+
+
+def _extract_first_segment(path_str: str) -> Optional[str]:
+    """Extract the first segment from a path string."""
+    path_stripped = (path_str or "").strip()
+    if path_stripped and path_stripped.strip('/'):
+        first_segment = path_stripped.strip('/').split('/')[0]
+        return first_segment if first_segment else None
+    return None
+
+
+def determine_operation_name_strategy(operations: List[Any]) -> Callable[[str, str], str]:
+    """
+    Determine the naming strategy for operations by checking if first path segments are unique.
+
+    Args:
+        operations: List of operations. Each operation should have:
+            - For APIEndpoint objects: .path and .operation_id attributes
+            - For dict objects: 'path' key and 'operationId' key, or nested 'op_obj' dict with 'operationId'
+
+    Returns:
+        A function that takes (path: str, operation_id: str) and returns the name to use.
+    """
+    first_segments = []
+    operation_ids = []
+
+    for op in operations:
+        if hasattr(op, 'path'):
+            path = op.path
+            operation_id = op.operation_id
+        elif isinstance(op, dict):
+            path = op.get('path', '')
+            operation_id = op.get('operationId', '')
+            if not operation_id and 'op_obj' in op and isinstance(op['op_obj'], dict):
+                operation_id = op['op_obj'].get('operationId', '')
+        else:
+            continue
+
+        first_seg = _extract_first_segment(path)
+        if first_seg:
+            first_segments.append(first_seg)
+        if operation_id:
+            operation_ids.append(operation_id)
+
+    use_first_segment = len(first_segments) == len(set(first_segments)) and len(first_segments) > 0
+
+    def get_operation_name(path: str, operation_id: str) -> str:
+        """Get the operation name based on the determined strategy."""
+        if use_first_segment:
+            first_seg = _extract_first_segment(path)
+            if first_seg:
+                return first_seg
+        return operation_id or "unnamed"
+
+    return get_operation_name
 
 
 # A field spec is either a (type, default) tuple, or another nested dict of field specs
@@ -382,13 +437,26 @@ def extract_body_params(api, all_params: dict):
 def construct_final_url(base_url: str, api, path_params: dict, query_params: dict) -> str:
     """
     Build the final URL by substituting path parameters and appending query parameters.
+    Handles list values for repeated query parameters (e.g., specialty_category_codes=75&specialty_category_codes=231).
     """
     final_path = api.path
     for k, v in path_params.items():
         final_path = final_path.replace(f"{{{k}}}", str(v))
     final_url = base_url + final_path
     if query_params:
-        final_url += "?" + urlencode(query_params)
+        # Handle list values for repeated query parameters
+        # urlencode doesn't handle lists correctly, so we need to flatten them
+        flattened_params = []
+        for key, value in query_params.items():
+            if isinstance(value, list):
+                # For lists, create multiple key-value pairs
+                for item in value:
+                    flattened_params.append((key, item))
+            elif value is not None:
+                # For non-list values, add as single key-value pair
+                flattened_params.append((key, value))
+        if flattened_params:
+            final_url += "?" + urlencode(flattened_params)
     return final_url
 
 
@@ -575,12 +643,22 @@ def new_mcp_from_custom_parser(
     mcp = FastMCP(prefix)
     server_url = parser.get_server()
     base_url += server_url if "http" not in server_url else ""
-    for api in parser.apis():
-        if 'No-API-Docs' in api.description or 'Private-API' in api.description:
-            continue
-        if 'constant' in api.path:
-            continue
-        tool_name = sanitize_tool_name(f"{prefix}_{api.operation_id}")
+
+    all_apis = [
+        api
+        for api in parser.apis()
+        if 'No-API-Docs' not in api.description
+        and 'Private-API' not in api.description
+        and 'constant' not in api.path
+    ]
+
+    get_operation_name = determine_operation_name_strategy(all_apis)
+
+    for api in all_apis:
+        path_first_segment = get_operation_name(api.path, api.operation_id)
+        path_prefix = sanitize_tool_name(path_first_segment)
+        # Don't include prefix here - mcp_manager.py will add it when registering tools
+        tool_name = f"{prefix}_{sanitize_tool_name(path_prefix)}"
         description = f"{api.operation_id} {api.summary} {api.description}"
 
         # Dynamically collect field definitions and build the InputModel

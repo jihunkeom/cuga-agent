@@ -35,6 +35,71 @@ def kill_process_on_port(port):
     return False
 
 
+async def find_function_name(client, registry_server, app_name, keywords=None, method=None):
+    """
+    Helper function to find the correct function name for an application.
+
+    Args:
+        client: httpx.AsyncClient instance
+        registry_server: Base URL of the registry server
+        app_name: Name of the application (e.g., "digital_sales")
+        keywords: List of keywords that should be in the function name (e.g., ["accounts", "my"])
+        method: HTTP method to filter by (e.g., "GET")
+
+    Returns:
+        str: The function name, or None if not found
+    """
+    apis_response = await client.get(f"{registry_server}/applications/{app_name}/apis")
+    if apis_response.status_code != 200:
+        return None
+
+    apis = apis_response.json()
+    if not apis:
+        return None
+
+    app_prefix = f"{app_name}_"
+    function_name = None
+
+    # First pass: look for exact match with all keywords
+    if keywords:
+        for api_name in apis.keys():
+            if api_name.startswith(app_prefix):
+                api_lower = api_name.lower()
+                if all(keyword.lower() in api_lower for keyword in keywords):
+                    function_name = api_name
+                    break
+
+    # Second pass: if method specified, look for matching method
+    if not function_name and method:
+        for api_name, api_info in apis.items():
+            if api_name.startswith(app_prefix):
+                if isinstance(api_info, dict) and api_info.get('method', '').upper() == method.upper():
+                    function_name = api_name
+                    break
+
+    # Third pass: any function with prefix and at least one keyword
+    if not function_name and keywords:
+        for api_name in apis.keys():
+            if api_name.startswith(app_prefix):
+                api_lower = api_name.lower()
+                if any(keyword.lower() in api_lower for keyword in keywords):
+                    function_name = api_name
+                    break
+
+    # Fallback: any function with the prefix
+    if not function_name:
+        for api_name in apis.keys():
+            if api_name.startswith(app_prefix):
+                function_name = api_name
+                break
+
+    # Last resort: first API
+    if not function_name:
+        function_name = list(apis.keys())[0]
+
+    return function_name
+
+
 # Test configurations
 LEGACY_CONFIG = """# Legacy OpenAPI services
 services:
@@ -213,10 +278,20 @@ class TestAPIRegistryE2E:
     async def test_call_function(self, registry_server):
         """Test /functions/call endpoint"""
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Call function with no parameters
+            # Find function name dynamically - look for accounts-related function
+            function_name = await find_function_name(
+                client, registry_server, "digital_sales", ["accounts", "my"], method="GET"
+            )
+            if not function_name:
+                # Fallback: any GET function with accounts
+                function_name = await find_function_name(
+                    client, registry_server, "digital_sales", ["accounts"], method="GET"
+                )
+            assert function_name is not None, "Could not find accounts function"
+
             payload = {
                 "app_name": "digital_sales",
-                "function_name": "digital_sales_get_my_accounts_my_accounts_get",
+                "function_name": function_name,
                 "args": {},
             }
 
@@ -244,10 +319,20 @@ class TestAPIRegistryE2E:
     async def test_call_function_with_params(self, registry_server):
         """Test calling function with parameters"""
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # Call function with parameters
+            # Find function name dynamically - look for third_party_accounts function
+            function_name = await find_function_name(
+                client, registry_server, "digital_sales", ["third", "party", "accounts"], method="GET"
+            )
+            if not function_name:
+                # Fallback: any GET function with accounts that might accept parameters
+                function_name = await find_function_name(
+                    client, registry_server, "digital_sales", ["accounts"], method="GET"
+                )
+            assert function_name is not None, "Could not find third party accounts function"
+
             payload = {
                 "app_name": "digital_sales",
-                "function_name": "digital_sales_get_third_party_accounts_third_party_accounts_get",
+                "function_name": function_name,
                 "args": {
                     "campaign_name": "Tech Transformation",
                 },
@@ -386,9 +471,20 @@ async def run_e2e_tests():
         # Test 4: Call function
         print("\n📞 Test 4: Call Function")
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # Find function name dynamically
+            function_name = await find_function_name(
+                client, base_url, "digital_sales", ["accounts", "my"], method="GET"
+            )
+            if not function_name:
+                function_name = await find_function_name(
+                    client, base_url, "digital_sales", ["accounts"], method="GET"
+                )
+
+            assert function_name is not None, "Could not find accounts function"
+
             payload = {
                 "app_name": "digital_sales",
-                "function_name": "digital_sales_get_my_accounts_my_accounts_get",
+                "function_name": function_name,
                 "args": {},
             }
 

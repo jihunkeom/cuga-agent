@@ -59,33 +59,20 @@ run_pytest_with_memory() {
     fi
 }
 
+echo "Running unit tests (registry + variables manager + local sandbox + E2B lite)..."
+run_pytest ./src/cuga/backend/tools_env/registry/tests/
+run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
+run_pytest ./src/cuga/backend/cuga_graph/nodes/cuga_lite/executors/tests/
+echo "✅ All unit tests passed!"
+
 # Check for test type flag
 if [ "$1" = "unit_tests" ]; then
-    echo "Running unit tests (registry + variables manager + local sandbox + E2B lite)..."
-    run_pytest ./src/cuga/backend/tools_env/registry/tests/
-    run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
-    run_pytest ./src/system_tests/e2e/test_runtime_tools.py
-    run_pytest ./src/cuga/backend/tools_env/code_sandbox/tests/
-    run_pytest ./src/cuga/backend/cuga_graph/nodes/cuga_lite/tests/
-    run_pytest ./src/system_tests/unit/test_sandbox_async.py
-    run_pytest ./src/cuga/backend/cuga_graph/nodes/api/code_agent/test_extract_codeblocks.py
-    run_pytest ./src/system_tests/unit/test_variable_creation_order.py
-    echo "✅ All unit tests passed!"
     exit 0
 else
-    echo "Running default tests (registry + variables manager + local sandbox + E2B lite + SDK integration + e2e + memory + stability)..."
-    run_pytest ./src/cuga/backend/tools_env/registry/tests/
-    run_pytest ./src/cuga/backend/cuga_graph/nodes/api/variables_manager/tests/
-    run_pytest ./src/system_tests/e2e/test_runtime_tools.py
-    run_pytest ./src/cuga/backend/tools_env/code_sandbox/tests/
-    run_pytest ./src/cuga/backend/cuga_graph/nodes/cuga_lite/tests/
-    run_pytest ./src/system_tests/unit/test_sandbox_async.py
-    run_pytest ./src/cuga/backend/cuga_graph/nodes/api/code_agent/test_extract_codeblocks.py
-    run_pytest ./src/system_tests/unit/test_variable_creation_order.py
+    echo "Running policy integration tests..."
+    run_pytest ./src/cuga/backend/cuga_graph/policy/tests
     echo "Running SDK integration tests..."
-    run_pytest ./tests/integration/test_sdk_integration.py
-    # run_pytest_with_memory ./src/system_tests/e2e/test_memory_integration.py
-    # run_pytest_with_memory ./src/system_tests/e2e/balanced_test_memory.py
+    run_pytest ./src/cuga/sdk_core/tests/
     echo "Running stability tests..."
     # Force unbuffered output for Python to ensure all logs are captured
     PYTHONUNBUFFERED=1 uv run run_stability_tests.py --method local

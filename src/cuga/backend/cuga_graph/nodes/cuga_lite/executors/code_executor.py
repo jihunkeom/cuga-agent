@@ -106,6 +106,10 @@ class CodeExecutor:
 
         new_vars = VariableUtils.reorder_variables_by_print(new_vars, code)
 
+        # Limit variables to keep based on configuration
+        keep_last_n = settings.advanced_features.code_executor_keep_last_n
+        new_vars = VariableUtils.limit_variables_to_keep(new_vars, keep_last_n)
+
         result = VariableUtils.add_variables_to_manager(new_vars, state.variables_manager, result)
 
         return result, new_vars

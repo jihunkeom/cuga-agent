@@ -1048,7 +1048,10 @@ export function CustomChat({ onVariablesUpdate, onFileAutocompleteOpen, onFileHo
               </div>
               {message.isCardResponse && message.chatInstance ? (
                 <div className="message-content message-card-content">
-                  <CardManager chatInstance={message.chatInstance as any} />
+                  <CardManager 
+                    chatInstance={message.chatInstance as any} 
+                    threadId={threadIdRef.current || threadId}
+                  />
                 </div>
               ) : (
                 <div

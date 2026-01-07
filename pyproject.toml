@@ -29,10 +29,12 @@ dependencies = [
     "fastmcp",
     "langchain-mcp-adapters>=0.1.9",
     "pyyaml>=6.0.3",
-    "pymilvus>=2.6.4",
+    "pymilvus[milvus-lite,model]>=2.6.4",
     "langchain-groq>=0.3.8",
     "tavily-python",
     "e2b-code-interpreter>=2.4.1",
+    "torch>=2.9.1",
+    "sentence-transformers>=5.1.2",
 ]
 
 [project.optional-dependencies]

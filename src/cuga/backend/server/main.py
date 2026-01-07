@@ -109,6 +109,7 @@ class AppState:
         self.agent: Optional[DynamicAgentGraph] = (
             None  # Replace Any with your Agent's class type if available
         )
+        self.policy_system: Optional[Any] = None  # PolicyConfigurable instance
         # Per-thread cancellation events for concurrent user support
         # Using asyncio.Event for thread-safe cancellation signaling
         self.stop_events: Dict[str, asyncio.Event] = {}
@@ -228,6 +229,21 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to load policies: {e}")
 
+    # Initialize policy system (only if enabled)
+    if settings.policy.enabled:
+        try:
+            from cuga.backend.cuga_graph.policy.configurable import PolicyConfigurable
+
+            app_state.policy_system = PolicyConfigurable.get_instance()
+            await app_state.policy_system.initialize()
+            logger.info("✅ Policy system initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize policy system: {e}")
+            app_state.policy_system = None
+    else:
+        logger.info("Policy system disabled in settings")
+        app_state.policy_system = None
+
     # Start the save_reuse server if configured
 
     await manage_save_reuse_server()
@@ -266,7 +282,9 @@ async def lifespan(app: FastAPI):
         if settings.advanced_features.langfuse_tracing and CallbackHandler is not None
         else None
     )
-    app_state.agent = DynamicAgentGraph(None, langfuse_handler=langfuse_handler)
+    app_state.agent = DynamicAgentGraph(
+        None, langfuse_handler=langfuse_handler, policy_system=app_state.policy_system
+    )
     await app_state.agent.build_graph()
 
     logger.info("Application finished starting up...")
@@ -514,6 +532,7 @@ async def event_stream(query: str, api_mode=False, resume=None, thread_id: str =
                         # Get variables metadata from state
                         # We need to get the latest state from the graph to ensure we have the variables
                         variables_metadata = {}
+                        active_policies = []
                         if thread_id:
                             latest_state_values = app_state.agent.graph.get_state(
                                 {"configurable": {"thread_id": thread_id}}
@@ -524,10 +543,44 @@ async def event_stream(query: str, api_mode=False, resume=None, thread_id: str =
                                 variables_metadata = (
                                     local_state.variables_manager.get_all_variables_metadata()
                                 )
+                                # Extract active policies from cuga_lite_metadata
+                                if local_state.cuga_lite_metadata:
+                                    metadata = local_state.cuga_lite_metadata
+                                    if metadata.get("policy_matched") or metadata.get("policy_blocked"):
+                                        policy_data = {
+                                            "type": "policy",
+                                            "policy_type": metadata.get("policy_type", "unknown"),
+                                            "policy_name": metadata.get("policy_name", "Unknown Policy"),
+                                            "policy_blocked": metadata.get("policy_blocked", False),
+                                            "policy_matched": metadata.get("policy_matched", False),
+                                            "content": metadata.get("response_content")
+                                            or metadata.get("content")
+                                            or metadata.get("approval_message")
+                                            or "",
+                                            "metadata": {
+                                                "policy_blocked": metadata.get("policy_blocked", False),
+                                                "policy_id": metadata.get("policy_id"),
+                                                "policy_name": metadata.get("policy_name"),
+                                                "policy_type": metadata.get("policy_type", "unknown"),
+                                                "policy_reasoning": metadata.get("policy_reasoning", ""),
+                                                "policy_confidence": metadata.get("policy_confidence"),
+                                                "response_content": metadata.get("response_content")
+                                                or metadata.get("content")
+                                                or metadata.get("approval_message")
+                                                or "",
+                                            },
+                                        }
+                                        active_policies.append(policy_data)
                         final_answer_text = (
                             event.answer
                             if settings.advanced_features.wxo_integration
-                            else json.dumps({"data": event.answer, "variables": variables_metadata})
+                            else json.dumps(
+                                {
+                                    "data": event.answer,
+                                    "variables": variables_metadata,
+                                    "active_policies": active_policies,
+                                }
+                            )
                             if event.answer
                             else "Done."
                         )
@@ -989,23 +1042,338 @@ async def save_memory_config(request: Request):
 @app.get("/api/config/policies")
 async def get_policies_config():
     """Endpoint to retrieve policies configuration."""
+    # Return early if policies are disabled
+    if not settings.policy.enabled:
+        return JSONResponse({"enablePolicies": False, "policies": []})
+
     try:
-        return JSONResponse({})
+        from cuga.backend.cuga_graph.policy.storage import PolicyStorage
+
+        # Use the policy system's storage if available, otherwise create a new one
+        if app_state.policy_system and app_state.policy_system.storage:
+            storage = app_state.policy_system.storage
+            logger.info("Using existing policy system storage for GET")
+        else:
+            # Get policy configuration from settings.toml
+            collection_name = settings.policy.collection_name
+            milvus_host = settings.policy.milvus_host
+            milvus_port = settings.policy.milvus_port
+            milvus_uri = settings.policy.milvus_uri
+
+            storage = PolicyStorage(
+                collection_name=collection_name,
+                host=milvus_host,
+                port=milvus_port,
+                milvus_uri=milvus_uri,
+            )
+            await storage.initialize_async()
+            logger.info(f"Created new storage instance for GET (collection: {collection_name})")
+
+        # List all policies (this IS async)
+        policies_objs = await storage.list_policies(enabled_only=False)
+
+        # Don't disconnect if using the policy system's storage
+        if not (app_state.policy_system and app_state.policy_system.storage):
+            storage.disconnect()
+
+        # Convert Policy objects to frontend format
+        policies = []
+        for policy_obj in policies_objs:
+            policy_dict = policy_obj.model_dump()
+            # Map backend field names to frontend expectations
+            frontend_policy = {
+                "id": policy_dict["id"],
+                "name": policy_dict["name"],
+                "description": policy_dict["description"],
+                "policy_type": policy_dict["type"],
+                "enabled": policy_dict.get("enabled", True),
+                "triggers": policy_dict.get("triggers", []),
+                "priority": policy_dict.get("priority", 50),
+            }
+
+            # Add type-specific fields
+            if policy_dict["type"] == "intent_guard":
+                frontend_policy["intent_examples"] = policy_dict.get("intent_examples", [])
+                frontend_policy["response"] = policy_dict.get("response", {})
+                frontend_policy["allow_override"] = policy_dict.get("allow_override", False)
+            elif policy_dict["type"] == "playbook":
+                frontend_policy["markdown_content"] = policy_dict.get("markdown_content", "")
+                frontend_policy["steps"] = policy_dict.get("steps", [])
+                frontend_policy["inject_as_system_prompt"] = policy_dict.get("inject_as_system_prompt", True)
+            elif policy_dict["type"] == "tool_guide":
+                frontend_policy["target_tools"] = policy_dict.get("target_tools", [])
+                frontend_policy["target_apps"] = policy_dict.get("target_apps")
+                frontend_policy["guide_content"] = policy_dict.get("guide_content", "")
+                frontend_policy["prepend"] = policy_dict.get("prepend", False)
+            elif policy_dict["type"] == "tool_approval":
+                frontend_policy["required_tools"] = policy_dict.get("required_tools", [])
+                frontend_policy["required_apps"] = policy_dict.get("required_apps")
+                frontend_policy["approval_message"] = policy_dict.get("approval_message")
+                frontend_policy["show_code_preview"] = policy_dict.get("show_code_preview", True)
+                frontend_policy["auto_approve_after"] = policy_dict.get("auto_approve_after")
+            elif policy_dict["type"] == "output_formatter":
+                frontend_policy["format_type"] = policy_dict.get("format_type", "markdown")
+                frontend_policy["format_config"] = policy_dict.get("format_config", "")
+
+            policies.append(frontend_policy)
+
+        logger.info(f"Loaded {len(policies)} policies from storage")
+        return JSONResponse({"enablePolicies": settings.policy.enabled, "policies": policies})
     except Exception as e:
         logger.error(f"Failed to load policies config: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to load policies config: {str(e)}")
+        import traceback
+
+        logger.error(traceback.format_exc())
+        return JSONResponse({"enablePolicies": settings.policy.enabled, "policies": []})
 
 
 @app.post("/api/config/policies")
 async def save_policies_config(request: Request):
     """Endpoint to save policies configuration."""
+    # Return early if policies are disabled
+    if not settings.policy.enabled:
+        return JSONResponse(
+            {"status": "error", "message": "Policy system is disabled in settings"},
+            status_code=403,
+        )
+
     try:
-        await request.json()
-        logger.info("Policies configuration saved")
-        return JSONResponse({"status": "success", "message": "Policies configuration saved"})
+        from cuga.backend.cuga_graph.policy.storage import PolicyStorage
+        from cuga.backend.cuga_graph.policy.models import (
+            IntentGuard,
+            Playbook,
+            ToolGuide,
+            ToolApproval,
+            OutputFormatter,
+            IntentGuardResponse,
+            PlaybookStep,
+        )
+
+        data = await request.json()
+        logger.info(f"Received policy save request with {len(data.get('policies', []))} policies")
+        policies = data.get("policies", [])
+
+        # Use the policy system's storage if available, otherwise create a new one
+        # Storage will handle all embedding configuration internally
+        if app_state.policy_system and app_state.policy_system.storage:
+            storage = app_state.policy_system.storage
+            logger.info("Using existing policy system storage")
+        else:
+            # Get basic config from settings, storage will handle embedding config internally
+            collection_name = settings.policy.collection_name
+            milvus_host = settings.policy.milvus_host
+            milvus_port = settings.policy.milvus_port
+            milvus_uri = settings.policy.milvus_uri
+
+            # Embedding config - storage will auto-detect dimensions during initialization
+            embedding_provider = os.getenv("POLICY_EMBEDDING_PROVIDER") or settings.policy.embedding_provider
+            embedding_model = os.getenv("POLICY_EMBEDDING_MODEL") or settings.policy.embedding_model
+
+            storage = PolicyStorage(
+                collection_name=collection_name,
+                host=milvus_host,
+                port=milvus_port,
+                milvus_uri=milvus_uri,
+                embedding_provider=embedding_provider,
+                embedding_model=embedding_model,
+                # embedding_dim will be auto-detected during initialize_async()
+            )
+            await storage.initialize_async()
+            logger.info(
+                f"Created new storage instance from settings (collection: {collection_name}, "
+                f"embedding: {embedding_provider}, dim: {storage.embedding_dim})"
+            )
+
+        # Clear existing policies (simple approach - in production, do incremental updates)
+        existing_policies = await storage.list_policies(enabled_only=False)
+        for policy_obj in existing_policies:
+            await storage.delete_policy(policy_obj.id)
+
+        # Add new policies
+        for policy_data in policies:
+            try:
+                policy_type = policy_data.get("policy_type")
+                logger.info(f"Processing policy: {policy_data.get('name')} (type: {policy_type})")
+                logger.info(f"Triggers data: {policy_data.get('triggers')}")
+
+                # Validate and log keyword trigger operators
+                for trigger in policy_data.get('triggers', []):
+                    if trigger.get('type') == 'keyword':
+                        operator = trigger.get('operator', 'NOT_SET')
+                        keywords = trigger.get('value', [])
+                        logger.info(f"  Keyword trigger: operator={operator}, keywords={keywords}")
+
+                if policy_type == "intent_guard":
+                    # Convert to IntentGuard model
+                    response_data = policy_data.get("response", {})
+                    policy = IntentGuard(
+                        id=policy_data["id"],
+                        name=policy_data["name"],
+                        description=policy_data["description"],
+                        triggers=policy_data["triggers"],
+                        intent_examples=policy_data.get("intent_examples", []),
+                        response=IntentGuardResponse(
+                            response_type=response_data.get("response_type", "natural_language"),
+                            content=response_data.get("content", ""),
+                        ),
+                        allow_override=policy_data.get("allow_override", False),
+                        priority=policy_data.get("priority", 50),
+                        enabled=policy_data.get("enabled", True),
+                    )
+                    logger.info(f"Created IntentGuard policy with triggers: {policy.triggers}")
+                    # Validate keyword trigger operators after Pydantic parsing
+                    for trigger in policy.triggers:
+                        if hasattr(trigger, 'type') and trigger.type == 'keyword':
+                            operator = getattr(trigger, 'operator', 'NOT_SET')
+                            logger.info(
+                                f"  IntentGuard keyword trigger validated: operator={operator}, keywords={trigger.value}"
+                            )
+                elif policy_type == "playbook":
+                    # Convert to Playbook model
+                    steps_data = policy_data.get("steps", [])
+                    steps = [
+                        PlaybookStep(
+                            step_number=step["step_number"],
+                            instruction=step["instruction"],
+                            expected_outcome=step["expected_outcome"],
+                            tools_allowed=step.get("tools_allowed", []),
+                        )
+                        for step in steps_data
+                    ]
+
+                    policy = Playbook(
+                        id=policy_data["id"],
+                        name=policy_data["name"],
+                        description=policy_data["description"],
+                        triggers=policy_data["triggers"],
+                        markdown_content=policy_data.get("markdown_content", ""),
+                        steps=steps,
+                        priority=policy_data.get("priority", 50),
+                        enabled=policy_data.get("enabled", True),
+                    )
+                    logger.info(f"Created Playbook policy with triggers: {policy.triggers}")
+                    # Validate keyword trigger operators after Pydantic parsing
+                    for trigger in policy.triggers:
+                        if hasattr(trigger, 'type') and trigger.type == 'keyword':
+                            operator = getattr(trigger, 'operator', 'NOT_SET')
+                            logger.info(
+                                f"  Playbook keyword trigger validated: operator={operator}, keywords={trigger.value}"
+                            )
+                elif policy_type == "tool_guide":
+                    # Convert to ToolGuide model
+                    policy = ToolGuide(
+                        id=policy_data["id"],
+                        name=policy_data["name"],
+                        description=policy_data["description"],
+                        triggers=policy_data["triggers"],
+                        target_tools=policy_data.get("target_tools", []),
+                        target_apps=policy_data.get("target_apps"),
+                        guide_content=policy_data.get("guide_content", ""),
+                        prepend=policy_data.get("prepend", False),
+                        priority=policy_data.get("priority", 50),
+                        enabled=policy_data.get("enabled", True),
+                    )
+                elif policy_type == "tool_approval":
+                    # Convert to ToolApproval model
+                    policy = ToolApproval(
+                        id=policy_data["id"],
+                        name=policy_data["name"],
+                        description=policy_data["description"],
+                        triggers=policy_data["triggers"],
+                        required_tools=policy_data.get("required_tools", []),
+                        required_apps=policy_data.get("required_apps"),
+                        approval_message=policy_data.get("approval_message"),
+                        show_code_preview=policy_data.get("show_code_preview", True),
+                        auto_approve_after=policy_data.get("auto_approve_after"),
+                        priority=policy_data.get("priority", 50),
+                        enabled=policy_data.get("enabled", True),
+                    )
+                elif policy_type == "output_formatter":
+                    # Convert to OutputFormatter model
+                    policy = OutputFormatter(
+                        id=policy_data["id"],
+                        name=policy_data["name"],
+                        description=policy_data["description"],
+                        triggers=policy_data["triggers"],
+                        format_type=policy_data.get("format_type", "markdown"),
+                        format_config=policy_data.get("format_config", ""),
+                        priority=policy_data.get("priority", 50),
+                        enabled=policy_data.get("enabled", True),
+                        metadata=policy_data.get("metadata", {}),
+                    )
+                else:
+                    logger.warning(f"Unknown policy type: {policy_type}")
+                    continue
+
+                # Add to storage (embedding will be generated automatically)
+                await storage.add_policy(policy)
+                logger.info(f"Saved policy: {policy.id}")
+
+            except Exception as e:
+                logger.error(f"Failed to save policy {policy_data.get('id')}: {e}")
+                logger.exception(e)
+                continue
+
+        # Don't disconnect if using the policy system's storage
+        if not (app_state.policy_system and app_state.policy_system.storage):
+            storage.disconnect()
+            logger.info("Storage disconnected")
+        else:
+            logger.info("Keeping policy system storage connected")
+
+        logger.info(f"Policies configuration saved: {len(policies)} policies")
+        return JSONResponse({"status": "success", "message": f"Saved {len(policies)} policies successfully"})
     except Exception as e:
         logger.error(f"Failed to save policies config: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to save policies config: {str(e)}")
+        logger.exception(e)
+        import traceback
+
+        return JSONResponse(
+            {
+                "status": "error",
+                "message": f"Failed to save policies: {str(e)}",
+                "traceback": traceback.format_exc(),
+            },
+            status_code=500,
+        )
+
+
+@app.get("/api/tools/list")
+async def get_tools_list():
+    """Endpoint to retrieve detailed list of all available tools."""
+    try:
+        apps = await get_apps()
+        tools_list = []
+        apps_list = []
+
+        for app in apps:
+            try:
+                apis = await get_apis(app.name)
+                app_type = getattr(app, "type", "api").upper()
+
+                # Add app to apps list
+                apps_list.append({"name": app.name, "type": app_type, "tool_count": len(apis)})
+
+                # Add each tool with its app information
+                for tool_name, tool_def in apis.items():
+                    tools_list.append(
+                        {
+                            "name": tool_name,
+                            "app": app.name,
+                            "app_type": app_type,
+                            "description": tool_def.get("description", ""),
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to get tools for app {app.name}: {e}")
+                apps_list.append(
+                    {"name": app.name, "type": getattr(app, "type", "api").upper(), "tool_count": 0}
+                )
+
+        return JSONResponse({"tools": tools_list, "apps": apps_list})
+    except Exception as e:
+        logger.error(f"Failed to get tools list: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get tools list: {str(e)}")
 
 
 @app.get("/api/tools/status")

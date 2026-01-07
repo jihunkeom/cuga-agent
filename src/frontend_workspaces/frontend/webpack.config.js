@@ -160,5 +160,13 @@ export default {
     allowedHosts: "all",
     open: true,
     hot: true,
+    proxy: [
+      {
+        context: ['/api'],
+        target: 'http://localhost:7860',
+        changeOrigin: true,
+        secure: false,
+      },
+    ],
   },
 };

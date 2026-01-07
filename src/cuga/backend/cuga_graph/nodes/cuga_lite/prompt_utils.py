@@ -8,8 +8,8 @@ from typing import List
 from loguru import logger
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
-
 from cuga.backend.cuga_graph.nodes.cuga_lite.tool_provider_interface import AppDefinition
+from cuga.backend.llm.utils.helpers import create_chat_prompt_from_templates
 
 
 class Tool(BaseModel):
@@ -49,7 +49,7 @@ class FindToolsOutput(BaseModel):
 
     tools: List[Tool] = Field(
         ...,
-        max_length=4,
+        max_length=6,
         description="A list of up to 4 matching tools, ordered by relevance to the query.",
     )
 
@@ -174,7 +174,7 @@ class PromptUtils:
         query: str,
         all_tools: List[StructuredTool],
         all_apps: List[AppDefinition],
-    ) -> FindToolsOutput:
+    ) -> str:
         """
         Search tools from given applications and return the top 4 matching tools with reasoning.
 
@@ -189,19 +189,26 @@ class PromptUtils:
             all_apps: List of all available app definitions
 
         Returns:
-            FindToolsOutput: A Pydantic model containing a list of up to 4 matching tools,
-                            each with:
-                            - name: The tool name
-                            - input: Input parameters/schema
-                            - reasoning: Explanation of why this tool is relevant
-                            - output_schema: Response schema
-                            - params_doc: Formatted parameter documentation
-                            - response_doc: Formatted response documentation
+            str: A markdown-formatted string containing up to 4 matching tools, each with:
+                 - name: The tool name
+                 - reasoning: Explanation of why this tool is relevant
+                 - parameters: Formatted parameter documentation
+                 - response schema: Response/return value schema
         """
-        from cuga.backend.llm.utils.helpers import load_prompt_simple
-
-        prompt = load_prompt_simple('prompts/shortlister/system.jinja2', 'prompts/shortlister/user.jinja2')
-
+        prompt = create_chat_prompt_from_templates(
+            system_path='./prompts/shortlister/system.jinja2',
+            message_templates=[
+                (
+                    'human',
+                    """
+                Current Apps: {all_apps}
+                Current Available Tools: {all_tools}
+                """,
+                ),
+                ('ai', 'Sure, now give me the intent'),
+                ('human', 'User Intent: {input}'),
+            ],
+        )
         # Serialize tools properly, converting args_schema class to dict
         tools_as_dict = {}
         for tool in all_tools:
@@ -293,7 +300,50 @@ class PromptUtils:
             )
             enriched_tools.append(enriched_tool)
 
-        return FindToolsOutput(tools=enriched_tools)
+        if not enriched_tools:
+            return "No matching tools found for your query."
+
+        tool_descriptions = {
+            tool.name: getattr(tool, 'description', None)
+            for tool in all_tools
+            if hasattr(tool, 'description')
+        }
+
+        markdown_lines = [
+            f"# Found {len(enriched_tools)} Matching Tool(s)\n",
+            f"**Query:** {query}\n",
+        ]
+
+        for idx, tool in enumerate(enriched_tools, 1):
+            markdown_lines.append(f"## {idx}. `{tool.name}`\n")
+
+            tool_description = tool_descriptions.get(tool.name)
+            if tool_description:
+                markdown_lines.append(f"**Description:** {tool_description}\n")
+
+            markdown_lines.append(f"**Reasoning:** {tool.reasoning}\n")
+
+            if tool.params_doc:
+                markdown_lines.append("**Parameters:**\n")
+                markdown_lines.append(f"{tool.params_doc}\n")
+            else:
+                markdown_lines.append("**Parameters:** No parameters required\n")
+
+            if tool.response_doc:
+                markdown_lines.append("**Response Schema:**\n")
+                markdown_lines.append(f"{tool.response_doc}\n")
+
+            if tool.input_ and tool.input_ != {}:
+                markdown_lines.append("**Input Schema:**\n")
+                markdown_lines.append(f"```json\n{json.dumps(tool.input_, indent=2)}\n```\n")
+
+            if tool.output_schema and tool.output_schema != {}:
+                markdown_lines.append("**Output Schema:**\n")
+                markdown_lines.append(f"```json\n{json.dumps(tool.output_schema, indent=2)}\n```\n")
+
+            markdown_lines.append("---\n")
+
+        return "\n".join(markdown_lines)
 
     @staticmethod
     def create_find_tools_bound(all_tools: List[StructuredTool], all_apps: List[AppDefinition]):
@@ -304,7 +354,7 @@ class PromptUtils:
             all_apps: List of all available app definitions
 
         Returns:
-            An async callable that only requires query: str as input.
+            An async callable that only requires query: str as input and returns a markdown string.
         """
         bound_func = functools.partial(
             PromptUtils.find_tools,
@@ -313,7 +363,7 @@ class PromptUtils:
         )
 
         @functools.wraps(PromptUtils.find_tools)
-        async def wrapper(query: str) -> FindToolsOutput:
+        async def wrapper(query: str) -> str:
             return await bound_func(query)
 
         return wrapper

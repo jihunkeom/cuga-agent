@@ -60,7 +60,6 @@ class SecurityValidator:
         (r'__mro__', 'class hierarchy traversal'),
         (r'__class__', 'class introspection'),
         (r'__self__', 'method binding introspection'),
-        (r'getattr\s*\(', 'attribute access bypass'),
         (r'setattr\s*\(', 'attribute modification bypass'),
         (r'delattr\s*\(', 'attribute deletion bypass'),
         (r'hasattr\s*\(', 'attribute check'),

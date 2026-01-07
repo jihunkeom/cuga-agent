@@ -272,6 +272,7 @@ class AgentLoop:
         tracker: ActivityTracker,
         env_pointer: Optional[BrowserEnvGymAsync | ExtensionEnv] = None,
         logger_name: str = 'agent_loop',
+        policy_system: Optional[Any] = None,
     ):
         self.env_pointer = env_pointer
         self.thread_id = thread_id
@@ -279,6 +280,7 @@ class AgentLoop:
         self.graph = graph
         self.tracker = tracker
         self.logger = logging.getLogger(logger_name)
+        self.policy_system = policy_system
 
     async def stream_event(self, event: StreamEvent) -> Generator[str, None, None]:
         yield event.format()
@@ -413,6 +415,26 @@ class AgentLoop:
             # For subgraph events, extract final_answer or last chat message
             event_val = ""
             if isinstance(event_data, dict):
+                # Check if this is any policy event (unified handling)
+                metadata = event_data.get("cuga_lite_metadata", {})
+                if metadata.get("policy_blocked") or metadata.get("policy_matched"):
+                    policy_type = metadata.get("policy_type", "unknown")
+                    policy_name = metadata.get("policy_name", "Unknown Policy")
+
+                    logger.info(f"Detected policy event: {policy_name} (type: {policy_type})")
+
+                    # Create a unified Policy event with all metadata as JSON
+                    policy_event = {
+                        "type": "policy",
+                        "policy_type": policy_type,
+                        "policy_name": policy_name,
+                        "policy_blocked": metadata.get("policy_blocked", False),
+                        "policy_matched": metadata.get("policy_matched", False),
+                        "content": event_data.get("final_answer", ""),
+                        "metadata": metadata,
+                    }
+                    return StreamEvent(name="Policy", data=json.dumps(policy_event))
+
                 if event_data.get("final_answer"):
                     event_val = event_data["final_answer"]
                 elif event_data.get("chat_messages"):
@@ -447,13 +469,21 @@ class AgentLoop:
         if settings.advanced_features.langfuse_tracing and self.langfuse_handler is not None:
             callbacks.insert(0, self.langfuse_handler)
 
-        return self.graph.astream(
-            state if state else Command(resume=resume.model_dump()) if not both_none else None,
-            config={
-                "recursion_limit": 135,
-                "callbacks": callbacks,
+        config = {
+            "recursion_limit": 135,
+            "callbacks": callbacks,
+            "configurable": {
                 "thread_id": self.thread_id,
             },
+        }
+
+        # Add policy_system to configurable if available
+        if self.policy_system:
+            config["configurable"]["policy_system"] = self.policy_system
+
+        return self.graph.astream(
+            state if state else Command(resume=resume.model_dump()) if not both_none else None,
+            config=config,
             stream_mode="updates",
             subgraphs=True,
         )
@@ -512,7 +542,91 @@ class AgentLoop:
             logger.debug(
                 f"Detected FinalAnswerAgent or CodeAgent in event_keys. final_answer: {state.final_answer[:100] if state.final_answer else 'None'}..."
             )
-            return AgentLoopAnswer(end=True, has_tools=False, answer=state.final_answer, tools=msg.tool_calls)
+            # Check if this is a policy event by looking at cuga_lite_metadata (unified handling)
+            answer = state.final_answer
+            if hasattr(state, 'cuga_lite_metadata') and state.cuga_lite_metadata:
+                metadata = state.cuga_lite_metadata
+                if metadata.get('policy_blocked') or metadata.get('policy_matched'):
+                    policy_type = metadata.get('policy_type', 'unknown')
+                    policy_name = metadata.get('policy_name', 'Unknown Policy')
+                    is_blocked = metadata.get('policy_blocked', False)
+
+                    logger.info(
+                        f"Wrapping final answer with policy metadata: {policy_name} (type: {policy_type})"
+                    )
+
+                    # Generate user-friendly markdown message based on policy type
+                    if policy_type == "tool_approval" and metadata.get('approval_required'):
+                        # Tool approval message
+                        approval_msg = metadata.get(
+                            'approval_message', 'This tool requires your approval before execution.'
+                        )
+                        tools_list = metadata.get('required_tools', [])
+                        apps_list = metadata.get('required_apps', [])
+
+                        content_lines = [f"## ✋ {policy_name}", "", approval_msg, ""]
+
+                        if tools_list:
+                            if tools_list == ["*"]:
+                                content_lines.append("**Tools requiring approval:** All tools")
+                            else:
+                                content_lines.append(f"**Tools requiring approval:** {', '.join(tools_list)}")
+                            content_lines.append("")
+
+                        if apps_list:
+                            content_lines.append(f"**Apps requiring approval:** {', '.join(apps_list)}")
+                            content_lines.append("")
+
+                        code_preview = metadata.get('code_preview', [])
+                        if code_preview:
+                            content_lines.append("### Code Preview")
+                            content_lines.append("")
+                            content_lines.append("```python")
+                            content_lines.extend(code_preview)
+                            content_lines.append("```")
+                            content_lines.append("")
+
+                        content_lines.append("---")
+                        content_lines.append("*Please review and approve to continue execution.*")
+                        user_content = "\n".join(content_lines)
+
+                    elif is_blocked:
+                        # Blocked policy message
+                        response_content = metadata.get(
+                            'response_content',
+                            state.final_answer or 'This action was blocked by a security policy.',
+                        )
+                        user_content = f"## 🛑 {policy_name}\n\n{response_content}"
+
+                    elif policy_type == "playbook":
+                        # Playbook message
+                        playbook_content = metadata.get('playbook_content', state.final_answer)
+                        if playbook_content and playbook_content != "No answer found":
+                            user_content = f"## 📖 {policy_name}\n\n{playbook_content}"
+                        else:
+                            user_content = f"## 📖 {policy_name}\n\nFollowing the playbook to guide you through this process."
+
+                    elif policy_type == "tool_guide":
+                        # Tool guide message
+                        user_content = f"## 🔧 {policy_name}\n\nTool descriptions have been enhanced with additional guidelines."
+
+                    else:
+                        # Generic policy message
+                        user_content = state.final_answer or f"## 📋 {policy_name}\n\nPolicy is active."
+
+                    # Create unified policy event
+                    answer = {
+                        "type": "policy",
+                        "policy_type": policy_type,
+                        "policy_name": policy_name,
+                        "policy_blocked": is_blocked,
+                        "policy_matched": metadata.get('policy_matched', False),
+                        "content": user_content,
+                        "metadata": metadata,
+                    }
+                    answer = json.dumps(answer)
+
+            return AgentLoopAnswer(end=True, has_tools=False, answer=answer, tools=msg.tool_calls)
         else:
             logger.debug(
                 f"No terminal agent detected. Returning intermediate answer with msg.content: {msg.content[:100] if msg and msg.content else 'None'}..."

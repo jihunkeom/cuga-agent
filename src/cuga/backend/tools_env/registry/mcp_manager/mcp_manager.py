@@ -542,6 +542,12 @@ class MCPManager:
 
             return result
 
+        # For OpenAPI services, schema should be in self.schemas
+        if app_name not in self.schemas:
+            raise KeyError(
+                f"Application '{app_name}' not found in schemas. Available apps: {list(self.schemas.keys())}"
+            )
+
         self.schemas[app_name]['x-app-name'] = app_name
         trans = OpenAPITransformer(self.schemas[app_name])
         res = trans.transform()

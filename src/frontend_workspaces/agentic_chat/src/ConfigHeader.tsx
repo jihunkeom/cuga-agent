@@ -112,9 +112,9 @@ export function ConfigHeader({
               <span>Model</span>
             </button>
             <button
-              className="config-header-btn hidden-tab"
-              disabled
-              title="Configure security policies (Coming soon)"
+              className="config-header-btn"
+              onClick={() => setActiveModal("policies")}
+              title="Configure policies"
             >
               <Shield size={16} />
               <span>Policies</span>
@@ -236,8 +236,11 @@ export function ConfigHeader({
                 <span>Model</span>
               </button>
               <button
-                className="mobile-menu-item hidden-tab"
-                disabled
+                className="mobile-menu-item"
+                onClick={() => {
+                  setActiveModal("policies");
+                  closeMobileMenu();
+                }}
               >
                 <Shield size={18} />
                 <span>Policies</span>

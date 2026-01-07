@@ -206,6 +206,7 @@ class AgentRunner:
             graph=agent.graph,
             env_pointer=self.env,
             tracker=tracker,
+            policy_system=agent.policy_system,
         )
         state.current_datetime = current_datetime if current_datetime else datetime.datetime.now().isoformat()
         state.pi = tracker.pi
@@ -312,6 +313,7 @@ class AgentRunner:
             graph=agent.graph,
             tracker=tracker,
             env_pointer=self.env,
+            policy_system=agent.policy_system,
         )
         state.current_datetime = current_datetime if current_datetime else datetime.datetime.now().isoformat()
         state.pi = tracker.pi

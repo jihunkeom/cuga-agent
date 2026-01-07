@@ -5,6 +5,7 @@ import requests
 from pydantic import BaseModel
 from typing import Optional, List
 import traceback
+import sys
 
 
 # Mock models for testing
@@ -291,7 +292,9 @@ class TestPetstoreHandler(unittest.TestCase):
         api = MockAPI("GET", "/pet/{petId}")
 
         # Patch the extract_url_params to raise an error
-        with patch('__main__.extract_url_params') as mock_extract:
+        # Get the current module (works whether run as script or via pytest)
+        current_module = sys.modules[handler.__module__]
+        with patch.object(current_module, 'extract_url_params') as mock_extract:
             mock_extract.side_effect = ValueError("Invalid pet ID format: must be integer")
 
             # Test data
@@ -415,7 +418,9 @@ class TestPetstoreHandler(unittest.TestCase):
         params = InvalidPet(name="test", photoUrls=["url1"], invalid_field={"this": "will cause issues"})
 
         # Patch extract_body_params to simulate parameter processing error
-        with patch('__main__.extract_body_params') as mock_extract:
+        # Get the current module (works whether run as script or via pytest)
+        current_module = sys.modules[handler.__module__]
+        with patch.object(current_module, 'extract_body_params') as mock_extract:
             mock_extract.side_effect = TypeError("Cannot serialize complex nested object")
 
             # Execute

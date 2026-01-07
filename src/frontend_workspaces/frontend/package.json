@@ -4,7 +4,7 @@
   "main": "main.js",
   "private": true,
   "type": "module",
-  "proxy": "https://localhost:7860",
+  "proxy": "http://localhost:7860",
   "description": "A basic example using @carbon/ai-chat as a web component.",
   "scripts": {
     "start": "DANGEROUSLY_DISABLE_HOST_CHECK=true webpack serve --config ./webpack.config.js",

@@ -1,5 +1,8 @@
 import json
-from cuga.backend.tools_env.registry.mcp_manager.adapter import sanitize_tool_name
+from cuga.backend.tools_env.registry.mcp_manager.adapter import (
+    determine_operation_name_strategy,
+    sanitize_tool_name,
+)
 
 
 class OpenAPITransformer:
@@ -487,11 +490,9 @@ class OpenAPITransformer:
             output_responses['failure'] = failure_schema_data
         return output_responses
 
-    def _extract_operation_details(self, path_str, method_str, op_obj, path_item_obj):
-        api_name = op_obj.get(
-            'operationId',
-            f"{method_str.lower()}_{path_str.replace('/', '_').replace('{', '').replace('}', '')}",
-        )
+    def _extract_operation_details(self, path_str, method_str, op_obj, path_item_obj, get_operation_name):
+        operation_id = op_obj.get('operationId', 'unnamed')
+        api_name = get_operation_name(path_str, operation_id)
         sanitized_api_name = sanitize_tool_name(f"{self.app_name}_{api_name}")
 
         description = op_obj.get('description', op_obj.get('summary', ''))
@@ -525,6 +526,7 @@ class OpenAPITransformer:
             print("Warning: 'paths' is not a dictionary in the OpenAPI schema. Cannot transform.")
             return output
 
+        operations = []
         for path_str, path_item_obj_ref in paths.items():
             path_item_obj = self._resolve_ref(path_item_obj_ref)
             if not isinstance(path_item_obj, dict):
@@ -542,13 +544,29 @@ class OpenAPITransformer:
                 if self._should_filter_api(description):
                     continue
 
-                api_name_key, operation_details = self._extract_operation_details(
-                    path_str, method_str, op_obj, path_item_obj
+                operations.append(
+                    {
+                        'path': path_str,
+                        'method': method_str,
+                        'op_obj': op_obj,
+                        'path_item_obj': path_item_obj,
+                    }
                 )
-                if api_name_key in output:
-                    print(
-                        f"Warning: Duplicate api_name_key '{api_name_key}' detected. Overwriting previous entry. "
-                        "Ensure operationIds combined with app_name result in unique keys or generation logic is robust."
-                    )
-                output[api_name_key] = operation_details
+
+        get_operation_name = determine_operation_name_strategy(operations)
+
+        for op_data in operations:
+            api_name_key, operation_details = self._extract_operation_details(
+                op_data['path'],
+                op_data['method'],
+                op_data['op_obj'],
+                op_data['path_item_obj'],
+                get_operation_name,
+            )
+            if api_name_key in output:
+                print(
+                    f"Warning: Duplicate api_name_key '{api_name_key}' detected. Overwriting previous entry. "
+                    "Ensure operationIds combined with app_name result in unique keys or generation logic is robust."
+                )
+            output[api_name_key] = operation_details
         return output

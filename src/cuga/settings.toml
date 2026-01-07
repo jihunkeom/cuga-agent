@@ -28,6 +28,7 @@ api_planner_hitl = false
 lite_mode = true  # Enable CugaLite for simple API tasks (faster execution)
 lite_mode_tool_threshold = 70  # Route to CugaLite if app has fewer than this many tools
 shortlisting_tool_threshold = 35  # Enable find_tools if total number of tools exceeds this threshold
+enable_todos = false  # Enable todos feature for complex multi-step task management
 enable_memory = false
 enable_fact = false
 save_reuse_generate_html = false  # Generate HTML visualization for saved flows (disabled by default for performance)
@@ -42,8 +43,20 @@ e2b_cleanup_frequency = 0  # Check all sandboxes every N get_or_create calls (0 
 message_window_limit = 100  # Maximum number of messages to keep in history (sliding window)
 max_input_length = 5000  # Maximum characters allowed in user input (prevents abuse)
 sub_task_keep_last_n = 5  # Number of most recent generated variables to keep when executing sub-tasks
-cuga_lite_max_steps = 20  # Maximum number of steps (call_model + sandbox cycles) before returning error
+code_executor_keep_last_n = -1  # Number of variables to keep after code execution: -1 = keep all, 1 = keep last 1, 2 = keep last 2, etc.
+cuga_lite_max_steps = 25  # Maximum number of steps (call_model + sandbox cycles) before returning error
 
+
+[policy]
+enabled = true  # Enable policy system (intent guards, playbooks, tool guides, tool approvals)
+collection_name = "cuga_policies"  # Milvus collection name for storing policies
+milvus_host = "localhost"  # Milvus server host
+milvus_port = "19530"  # Milvus server port
+milvus_uri = "./milvus_policies.db"  # Milvus Lite URI for embedded mode (fallback)
+embedding_provider = "local"  # "openai", "local", or "auto" (tries OpenAI, falls back to local)
+embedding_model = "all-MiniLM-L6-v2"  # Model name (default for local provider)
+embedding_dim = 384  # Embedding dimension (1536 for OpenAI, 384 for all-MiniLM-L6-v2)
+playbook_refine = false  # Enable playbook refinement based on user progress (requires LLM)
 
 [server_ports]
 registry = 8001

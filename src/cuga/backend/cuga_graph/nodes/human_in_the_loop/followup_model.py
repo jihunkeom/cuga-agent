@@ -115,6 +115,64 @@ def create_get_more_utterances():
     )
 
 
+def create_tool_approval_action(
+    policy_name: str,
+    required_tools: List[str],
+    code_preview: List[str],
+    full_code: str,
+    approval_message: str = None,
+) -> FollowUpAction:
+    """
+    Create a tool approval follow-up action.
+
+    Args:
+        policy_name: Name of the policy requiring approval
+        required_tools: List of tool names requiring approval
+        code_preview: List of code lines showing tool usage
+        full_code: Complete code to be executed
+        approval_message: Custom message for the approval request
+
+    Returns:
+        FollowUpAction for tool approval
+    """
+    tools_str = (
+        ", ".join(required_tools)
+        if len(required_tools) <= 3
+        else f"{', '.join(required_tools[:3])} and {len(required_tools) - 3} more"
+    )
+
+    description = approval_message or f"The following tools require approval: {tools_str}"
+
+    # Create options for the tools
+    [
+        SelectOption(
+            value=tool,
+            label=tool,
+            description=f"Tool: {tool}",
+        )
+        for tool in required_tools
+    ]
+
+    return FollowUpAction(
+        action_name=f"Approve Tool Execution - {policy_name}",
+        action_id=ActionIds.TOOL_APPROVAL,
+        return_to="CugaLite",
+        additional_data=AdditionalData(
+            tool={
+                "required_tools": required_tools,
+                "code_preview": code_preview,
+                "full_code": full_code,
+                "policy_name": policy_name,
+            }
+        ),
+        description=description,
+        type=ActionType.CONFIRMATION,
+        callback_url="/approve",
+        button_text="Approve & Execute",
+        color="warning",
+    )
+
+
 class ActionResponse(BaseModel):
     """Model for responses to follow-up actions."""
 

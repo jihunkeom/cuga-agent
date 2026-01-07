@@ -552,10 +552,12 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "playwright" },
     { name = "psutil" },
-    { name = "pymilvus" },
+    { name = "pymilvus", extra = ["milvus-lite", "model"] },
     { name = "python-dotenv" },
     { name = "pyyaml" },
+    { name = "sentence-transformers" },
     { name = "tavily-python" },
+    { name = "torch" },
     { name = "typer" },
     { name = "uvicorn" },
 ]
@@ -618,11 +620,13 @@ requires-dist = [
     { name = "mcp", extras = ["cli"], specifier = ">=1.23.0" },
     { name = "playwright", specifier = "==1.49.0" },
     { name = "psutil", specifier = ">=7.0.0" },
-    { name = "pymilvus", specifier = ">=2.6.4" },
+    { name = "pymilvus", extras = ["milvus-lite", "model"], specifier = ">=2.6.4" },
     { name = "python-dotenv" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rapidfuzz", marker = "extra == 'evaluation'" },
+    { name = "sentence-transformers", specifier = ">=5.1.2" },
     { name = "tavily-python" },
+    { name = "torch", specifier = ">=2.9.1" },
     { name = "typer", specifier = ">=0.15.3" },
     { name = "uvicorn" },
 ]
@@ -3905,6 +3909,27 @@ wheels = [
 [package.optional-dependencies]
 milvus-lite = [
     { name = "milvus-lite", marker = "sys_platform != 'win32'" },
+]
+model = [
+    { name = "pymilvus-model" },
+]
+
+[[package]]
+name = "pymilvus-model"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "onnxruntime" },
+    { name = "protobuf" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "transformers" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/0c/8f/a8212f3d932d566fdec354b49befa09174b239c8b8ad25a33b798cee393b/pymilvus_model-0.3.2.tar.gz", hash = "sha256:10ab49a989396943e08555b971f85182ddb50da47076e699a157c9a5ff542872", size = 36268, upload-time = "2025-03-31T08:47:45.007Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5b/ba/b34e3f8c57c453c02daf1a1eff9c4b62a2e89fc10a29bc83fb685155fe14/pymilvus_model-0.3.2-py3-none-any.whl", hash = "sha256:df8a90519a2adc47bd40f37d8c250b0ad0c7aaafc6139b52dc896d5cfda55d35", size = 47699, upload-time = "2025-03-31T08:47:43.372Z" },
 ]
 
 [[package]]

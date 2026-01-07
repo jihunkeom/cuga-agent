@@ -3,8 +3,9 @@ CugaLite Node - Fast execution node using CugaLite subgraph
 """
 
 import json
-from typing import Literal, Dict, Any, List, Optional
+from typing import Literal, Dict, Any, List, Optional, Callable
 from langgraph.types import Command
+from langchain_core.runnables import RunnableConfig
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -13,12 +14,75 @@ from cuga.backend.cuga_graph.state.agent_state import AgentState, SubTaskHistory
 from cuga.backend.activity_tracker.tracker import ActivityTracker
 from cuga.backend.cuga_graph.nodes.api.api_planner_agent.prompts.load_prompt import ActionName
 from cuga.backend.cuga_graph.state.api_planner_history import CoderAgentHistoricalOutput
+from cuga.backend.cuga_graph.utils.nodes_names import NodeNames, ActionIds
 from langchain_core.messages import HumanMessage
 from cuga.backend.llm.utils.helpers import load_one_prompt
 from cuga.config import settings
 
 
 tracker = ActivityTracker()
+
+
+class CugaLiteHumanInTheLoopHandler:
+    """Handler for CugaLite-specific human-in-the-loop interactions"""
+
+    def __init__(self):
+        self._action_handlers: Dict[str, Callable] = {
+            ActionIds.TOOL_APPROVAL: self._handle_tool_approval,
+        }
+
+    def handle_human_response(self, state: AgentState, node_name: str) -> Command:
+        """Handle any human response based on action_id"""
+        action_id = state.hitl_response.action_id
+
+        if action_id in self._action_handlers:
+            result = self._action_handlers[action_id](state, node_name)
+        else:
+            # Default fallback - continue to final answer
+            result = Command(update=state.model_dump(), goto=NodeNames.FINAL_ANSWER_AGENT)
+
+        # Reset hitl_response after processing
+        state.hitl_response = None
+        # Update the command with the reset state
+        return Command(update=state.model_dump(), goto=result.goto)
+
+    def add_action_handler(self, action_id: str, handler: Callable):
+        """Add a custom action handler"""
+        self._action_handlers[action_id] = handler
+
+    def _handle_tool_approval(self, state: AgentState, node_name: str) -> Command:
+        """Handle tool execution approval response"""
+        logger.info("Handling tool approval response in CugaLite")
+
+        # Check if user approved or denied
+        confirmed = state.hitl_response.confirmed
+
+        if confirmed:
+            logger.info("User approved tool execution - continuing with code execution")
+            # Clear the approval requirement and continue execution
+            # The code is already in state.script from the previous interrupt
+            state.cuga_lite_metadata = {
+                **state.cuga_lite_metadata,
+                "approval_required": False,
+                "user_approved": True,
+            }
+            state.sender = node_name
+            logger.debug(
+                f"[APPROVAL DEBUG] Setting user_approved=True in metadata: {state.cuga_lite_metadata}"
+            )
+            logger.debug(
+                f"[APPROVAL DEBUG] State before routing to subgraph: cuga_lite_metadata={state.cuga_lite_metadata}"
+            )
+            # Route back to CugaLite subgraph to continue execution
+            return Command(update=state.model_dump(), goto="CugaLiteSubgraph")
+        else:
+            logger.warning("User denied tool execution - stopping execution")
+            # User denied - set final answer and end
+            policy_name = state.cuga_lite_metadata.get("policy_name", "Tool Approval Policy")
+            state.final_answer = f"❌ **Execution Cancelled**\n\nYou denied the execution of restricted tools required by **{policy_name}**.\n\nThe agent will not proceed with this task."
+            state.execution_complete = True
+            state.sender = node_name
+            return Command(update=state.model_dump(), goto=NodeNames.FINAL_ANSWER_AGENT)
 
 
 def _convert_sets_to_lists(value: Any) -> Any:
@@ -50,8 +114,13 @@ class CugaLiteNode(BaseNode):
     def __init__(self, langfuse_handler: Optional[Any] = None, prompt_template: Optional[str] = None):
         super().__init__()
         self.name = "CugaLite"
-        self.prompt_template = load_one_prompt('prompts/mcp_prompt.jinja2')
+        if settings.advanced_features.enable_todos:
+            prompt_filename = 'prompts/mcp_prompt_todos.jinja2'
+        else:
+            prompt_filename = 'prompts/mcp_prompt.jinja2'
+        self.prompt_template = load_one_prompt(prompt_filename)
         self.langfuse_handler = langfuse_handler
+        self.hitl_handler = CugaLiteHumanInTheLoopHandler()
 
     @staticmethod
     async def read_text_file(file_path: str) -> Optional[str]:
@@ -166,15 +235,25 @@ class CugaLiteNode(BaseNode):
         error_indicators = ['Error during execution:', 'Error:', 'Exception:', 'Traceback', 'Failed to']
         return any(indicator in answer for indicator in error_indicators)
 
-    async def node(self, state: AgentState) -> Command[Literal['FinalAnswerAgent', 'PlanControllerAgent']]:
+    async def node(
+        self, state: AgentState
+    ) -> Command[
+        Literal['FinalAnswerAgent', 'PlanControllerAgent', 'CugaLiteSubgraph', 'SuggestHumanActions']
+    ]:
         """Execute CugaLite graph wrapper and process results.
 
         Args:
             state: Current agent state
 
         Returns:
-            Command to route to FinalAnswerAgent or PlanControllerAgent
+            Command to route to FinalAnswerAgent, PlanControllerAgent, or CugaLiteSubgraph
         """
+        # Handle human-in-the-loop responses
+
+        if state.sender == NodeNames.WAIT_FOR_RESPONSE and state.hitl_response:
+            logger.info(f"Handling HITL response with action_id: {state.hitl_response.action_id}")
+            return self.hitl_handler.handle_human_response(state, self.name)
+
         logger.info(f"CugaLite executing - state.input: {state.input}")
         logger.info(f"CugaLite executing - state.sub_task: {state.sub_task}")
 
@@ -260,11 +339,95 @@ class CugaLiteNode(BaseNode):
             },
         )
 
+    async def _apply_output_formatter(
+        self, state: AgentState, config: Optional[RunnableConfig] = None
+    ) -> None:
+        """
+        Apply OutputFormatter policies to the final answer from CugaLite execution.
+
+        Args:
+            state: Current agent state with final_answer set
+            config: Optional LangGraph config (may contain policy_system)
+        """
+        if not settings.policy.enabled:
+            return
+
+        from cuga.backend.cuga_graph.policy.enactment import PolicyEnactment
+        from cuga.backend.cuga_graph.policy.models import PolicyType
+
+        try:
+            # Get policy system from config (use provided config or create one with thread_id)
+            if config is None:
+                config = RunnableConfig(configurable={"thread_id": getattr(state, "thread_id", None)})
+
+            # Check for OutputFormatter policies using check_and_enact
+            logger.debug("CugaLiteCallback: Checking OutputFormatter policies...")
+            command, metadata = await PolicyEnactment.check_and_enact(
+                state, config, policy_types=[PolicyType.OUTPUT_FORMATTER]
+            )
+
+            if metadata and metadata.get("formatted_response"):
+                formatted_response = metadata["formatted_response"]
+                logger.info(
+                    f"CugaLiteCallback: OutputFormatter policy matched, formatted response "
+                    f"(original: {len(state.final_answer)} chars, formatted: {len(formatted_response)} chars)"
+                )
+                state.final_answer = formatted_response
+                # Store output formatter metadata in cuga_lite_metadata for UI display
+                state.cuga_lite_metadata = {
+                    **state.cuga_lite_metadata,
+                    "policy_matched": True,
+                    "policy_type": metadata.get("policy_type", "output_formatter"),
+                    "policy_name": metadata.get("policy_name", "Unknown Output Formatter"),
+                    "policy_id": metadata.get("policy_id"),
+                    "policy_reasoning": metadata.get("policy_reasoning", ""),
+                    "policy_confidence": metadata.get("policy_confidence"),
+                    "formatted_response": formatted_response,
+                    "original_response": metadata.get("original_response"),
+                    "format_type": metadata.get("format_type"),
+                }
+            elif metadata:
+                logger.debug("CugaLiteCallback: OutputFormatter metadata returned but no formatted_response")
+                # Store metadata even if no formatted_response (for UI display)
+                state.cuga_lite_metadata = {
+                    **state.cuga_lite_metadata,
+                    "policy_matched": True,
+                    "policy_type": metadata.get("policy_type", "output_formatter"),
+                    "policy_name": metadata.get("policy_name", "Unknown Output Formatter"),
+                    "policy_id": metadata.get("policy_id"),
+                    "policy_reasoning": metadata.get("policy_reasoning", ""),
+                    "policy_confidence": metadata.get("policy_confidence"),
+                }
+        except Exception as e:
+            logger.warning(f"CugaLiteCallback: Error checking OutputFormatter policies: {e}", exc_info=True)
+
     async def callback_node(
-        self, state: AgentState
-    ) -> Command[Literal['FinalAnswerAgent', 'PlanControllerAgent']]:
+        self, state: AgentState, config: Optional[RunnableConfig] = None
+    ) -> Command[
+        Literal['FinalAnswerAgent', 'PlanControllerAgent', 'SuggestHumanActions', 'CugaLiteSubgraph']
+    ]:
         """Process results after CugaLite subgraph execution."""
         logger.info("CugaLite callback node - processing subgraph results")
+        logger.info(f"  - Current state.sender: {state.sender}")
+        logger.info(
+            f"  - state.final_answer: {state.final_answer[:100] if state.final_answer else 'None'}..."
+        )
+
+        # Handle human-in-the-loop responses (when coming back from WaitForResponse)
+        if state.sender == NodeNames.WAIT_FOR_RESPONSE and state.hitl_response:
+            logger.info(f"Callback handling HITL response with action_id: {state.hitl_response.action_id}")
+            return self.hitl_handler.handle_human_response(state, self.name)
+
+        # Check if we need to route to HITL for tool approval (first time, after subgraph)
+        if state.hitl_action and state.hitl_action.action_id == ActionIds.TOOL_APPROVAL:
+            logger.info("Tool approval required - routing to SuggestHumanActions")
+            # IMPORTANT: Set sender so WaitForResponse knows where to return to
+            state.sender = self.name  # Update state object directly
+            logger.info(f"Set sender to: {state.sender}")
+            return Command(
+                update=state.model_dump(),  # Pass full state to ensure sender is included
+                goto=NodeNames.SUGGEST_HUMAN_ACTIONS,
+            )
 
         # Get metadata from state
         metadata = state.cuga_lite_metadata or {}
@@ -278,12 +441,15 @@ class CugaLiteNode(BaseNode):
         self._log_variable_changes(state, initial_var_names)
 
         # Process the results using the existing logic
-        return await self._process_results(
+        result = await self._process_results(
             state=state,
             answer=answer,
             initial_var_names=initial_var_names,
             is_autonomous_subtask=is_autonomous_subtask,
+            config=config,
         )
+        logger.info(f"CugaLiteCallback: Routing to {result.goto}, state.sender = {state.sender}")
+        return result
 
     async def _process_results(
         self,
@@ -291,6 +457,7 @@ class CugaLiteNode(BaseNode):
         answer: str,
         initial_var_names: List[str],
         is_autonomous_subtask: bool,
+        config: Optional[RunnableConfig] = None,
     ) -> Command[Literal['FinalAnswerAgent', 'PlanControllerAgent']]:
         """Process results from CugaLite graph execution and route to appropriate next node.
 
@@ -339,8 +506,14 @@ class CugaLiteNode(BaseNode):
             else:
                 # For regular execution, set final answer with error
                 state.final_answer = answer
-                state.sender = self.name
+                state.sender = NodeNames.CUGA_LITE
+
+                # Apply OutputFormatter policies before routing to FinalAnswerAgent
+                await self._apply_output_formatter(state, config)
+
                 logger.info("CugaLite execution failed, proceeding to FinalAnswerAgent with error")
+                logger.info(f"  - Set state.sender = {state.sender} (should be '{NodeNames.CUGA_LITE}')")
+                logger.info("  - Routing to: FinalAnswerAgent")
                 return Command(update=state.model_dump(), goto="FinalAnswerAgent")
 
         # chat_messages should already be synced since it's a shared key
@@ -406,6 +579,15 @@ class CugaLiteNode(BaseNode):
         else:
             # Regular execution - proceed to FinalAnswerAgent
             state.final_answer = answer
-            state.sender = self.name
+            state.sender = NodeNames.CUGA_LITE
+
+            # Apply OutputFormatter policies before routing to FinalAnswerAgent
+            await self._apply_output_formatter(state, config)
+
             logger.info("CugaLite execution successful, proceeding to FinalAnswerAgent")
+            logger.info(f"  - Set state.sender = {state.sender} (should be '{NodeNames.CUGA_LITE}')")
+            logger.info(
+                f"  - state.final_answer length: {len(state.final_answer) if state.final_answer else 0}"
+            )
+            logger.info("  - Routing to: FinalAnswerAgent")
             return Command(update=state.model_dump(), goto="FinalAnswerAgent")

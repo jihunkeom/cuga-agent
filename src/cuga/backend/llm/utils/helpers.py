@@ -7,6 +7,7 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
     MessagesPlaceholder,
     HumanMessagePromptTemplate,
+    AIMessagePromptTemplate,
 )
 from langchain_core.prompts.image import ImagePromptTemplate
 
@@ -145,3 +146,53 @@ def load_prompt_simple(
         ]
     )
     return prompt
+
+
+def create_chat_prompt_from_templates(
+    system_path: str,
+    message_templates: list[tuple[str, str]],
+) -> ChatPromptTemplate:
+    """Create a ChatPromptTemplate from a system file and list of message templates.
+
+    Args:
+        system_path: Path to system prompt template file, relative to caller's directory
+        message_templates: List of (message_type, template_string) tuples where
+                         message_type is 'human' or 'ai'
+
+    Returns:
+        ChatPromptTemplate with system message and user/ai messages
+
+    Example:
+        prompt = create_chat_prompt_from_templates(
+            system_path='./prompts/shortlister/system.jinja2',
+            message_templates=[
+                ('human', 'Current Apps: {all_apps}\nCurrent Available Tools: {all_tools}'),
+                ('ai', 'Sure, now give me the intent'),
+                ('human', 'User Intent: {input}'),
+            ]
+        )
+    """
+    caller_dir = get_caller_directory_path()
+    if caller_dir is None:
+        raise ValueError("Unable to determine caller directory path")
+
+    full_system_path = os.path.join(caller_dir, system_path)
+
+    pmt_system = PromptTemplate.from_file(
+        full_system_path,
+        template_format="jinja2",
+        encoding='utf-8',
+    )
+
+    messages = [SystemMessagePromptTemplate(prompt=pmt_system)]
+
+    for message_type, template_str in message_templates:
+        pmt = PromptTemplate.from_template(template_str)
+        if message_type == 'human':
+            messages.append(HumanMessagePromptTemplate(prompt=pmt))
+        elif message_type == 'ai':
+            messages.append(AIMessagePromptTemplate(prompt=pmt))
+        else:
+            raise ValueError(f"Invalid message_type: {message_type}. Must be 'human' or 'ai'")
+
+    return ChatPromptTemplate(messages=messages)

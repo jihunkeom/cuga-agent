@@ -113,46 +113,46 @@ class TestArrayHandling(unittest.TestCase):
         api = apis[0]
 
         # Test array parameters
-        array_params = [p for p in api.parameters if p.schema and p.schema.type == "array"]
+        array_params = [p for p in api.parameters if p.schema_field and p.schema_field.type == "array"]
         self.assertEqual(len(array_params), 3)
 
         # Test job_titles parameter
         job_titles_param = next(p for p in array_params if p.name == "job_titles")
-        self.assertEqual(job_titles_param.schema.type, "array")
-        self.assertIsNotNone(job_titles_param.schema.items)
-        self.assertEqual(job_titles_param.schema.items.type, "string")
+        self.assertEqual(job_titles_param.schema_field.type, "array")
+        self.assertIsNotNone(job_titles_param.schema_field.items)
+        self.assertEqual(job_titles_param.schema_field.items.type, "string")
         self.assertTrue(job_titles_param.required)
 
         # Test user_ids parameter
         user_ids_param = next(p for p in array_params if p.name == "user_ids")
-        self.assertEqual(user_ids_param.schema.type, "array")
-        self.assertIsNotNone(user_ids_param.schema.items)
-        self.assertEqual(user_ids_param.schema.items.type, "integer")
+        self.assertEqual(user_ids_param.schema_field.type, "array")
+        self.assertIsNotNone(user_ids_param.schema_field.items)
+        self.assertEqual(user_ids_param.schema_field.items.type, "integer")
         self.assertFalse(user_ids_param.required)
 
         # Test complex_objects parameter
         complex_objects_param = next(p for p in array_params if p.name == "complex_objects")
-        self.assertEqual(complex_objects_param.schema.type, "array")
-        self.assertIsNotNone(complex_objects_param.schema.items)
-        self.assertEqual(complex_objects_param.schema.items.type, "object")
-        self.assertIn("name", complex_objects_param.schema.items.properties)
-        self.assertIn("age", complex_objects_param.schema.items.properties)
+        self.assertEqual(complex_objects_param.schema_field.type, "array")
+        self.assertIsNotNone(complex_objects_param.schema_field.items)
+        self.assertEqual(complex_objects_param.schema_field.items.type, "object")
+        self.assertIn("name", complex_objects_param.schema_field.items.properties)
+        self.assertIn("age", complex_objects_param.schema_field.items.properties)
 
         # Test request body arrays
         self.assertIsNotNone(api.request_body)
         json_content = api.request_body.content.get("application/json")
         self.assertIsNotNone(json_content)
-        self.assertIsNotNone(json_content.schema)
+        self.assertIsNotNone(json_content.schema_field)
 
         # Test tags array in request body
-        tags_prop = json_content.schema.properties.get("tags")
+        tags_prop = json_content.schema_field.properties.get("tags")
         self.assertIsNotNone(tags_prop)
         self.assertEqual(tags_prop.type, "array")
         self.assertIsNotNone(tags_prop.items)
         self.assertEqual(tags_prop.items.type, "string")
 
         # Test metadata array in request body
-        metadata_prop = json_content.schema.properties.get("metadata")
+        metadata_prop = json_content.schema_field.properties.get("metadata")
         self.assertIsNotNone(metadata_prop)
         self.assertEqual(metadata_prop.type, "array")
         self.assertIsNotNone(metadata_prop.items)
@@ -289,10 +289,10 @@ class TestArrayHandling(unittest.TestCase):
 
         api = apis[0]
         statuses_param = next(p for p in api.parameters if p.name == "statuses")
-        self.assertEqual(statuses_param.schema.type, "array")
-        self.assertIsNotNone(statuses_param.schema.items)
-        self.assertEqual(statuses_param.schema.items.type, "string")
-        self.assertEqual(statuses_param.schema.items.enum, ["active", "inactive", "pending"])
+        self.assertEqual(statuses_param.schema_field.type, "array")
+        self.assertIsNotNone(statuses_param.schema_field.items)
+        self.assertEqual(statuses_param.schema_field.items.type, "string")
+        self.assertEqual(statuses_param.schema_field.items.enum, ["active", "inactive", "pending"])
 
         # Test v0 parser
         transformer = OpenAPITransformer(enum_array_schema)
@@ -338,11 +338,11 @@ class TestArrayHandling(unittest.TestCase):
 
         api = apis[0]
         matrix_param = next(p for p in api.parameters if p.name == "matrix")
-        self.assertEqual(matrix_param.schema.type, "array")
-        self.assertIsNotNone(matrix_param.schema.items)
-        self.assertEqual(matrix_param.schema.items.type, "array")
-        self.assertIsNotNone(matrix_param.schema.items.items)
-        self.assertEqual(matrix_param.schema.items.items.type, "number")
+        self.assertEqual(matrix_param.schema_field.type, "array")
+        self.assertIsNotNone(matrix_param.schema_field.items)
+        self.assertEqual(matrix_param.schema_field.items.type, "array")
+        self.assertIsNotNone(matrix_param.schema_field.items.items)
+        self.assertEqual(matrix_param.schema_field.items.items.type, "number")
 
         # Test v0 parser
         transformer = OpenAPITransformer(nested_array_schema)
@@ -393,9 +393,9 @@ class TestArrayHandling(unittest.TestCase):
 
         api = apis[0]
         limited_items_param = next(p for p in api.parameters if p.name == "limited_items")
-        self.assertEqual(limited_items_param.schema.type, "array")
-        self.assertIsNotNone(limited_items_param.schema.items)
-        self.assertEqual(limited_items_param.schema.items.type, "string")
+        self.assertEqual(limited_items_param.schema_field.type, "array")
+        self.assertIsNotNone(limited_items_param.schema_field.items)
+        self.assertEqual(limited_items_param.schema_field.items.type, "string")
 
         # Test v0 parser
         transformer = OpenAPITransformer(constrained_array_schema)

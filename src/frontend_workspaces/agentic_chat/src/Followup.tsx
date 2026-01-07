@@ -34,6 +34,12 @@ export const FollowupAction = ({ followupAction, callback }: FollowupActionProps
   const [startTime] = useState(Date.now());
   const [isWaiting, setIsWaiting] = useState(true);
 
+  // Safety check for followupAction
+  if (!followupAction) {
+    console.error("FollowupAction received null or undefined followupAction");
+    return <div className="text-red-500 p-4">Error: Invalid action data</div>;
+  }
+
   const {
     action_id,
     action_name,
@@ -328,28 +334,67 @@ export const FollowupAction = ({ followupAction, callback }: FollowupActionProps
         );
 
       case "confirmation":
+        // Check if this is a tool approval action with code preview
+        const isToolApproval = action_id === "tool_approval";
+        const toolData = followupAction.additional_data?.tool;
+        const codePreview = toolData?.code_preview || [];
+        const requiredTools = toolData?.required_tools || [];
+        
         return (
-          <div className="flex gap-3">
-            <button
-              onClick={() => handleConfirmation(true)}
-              disabled={isSubmitted}
-              className={`flex-1 px-4 py-3 bg-green-500 hover:bg-green-600 text-white rounded font-medium flex items-center justify-center gap-2 ${
-                isSubmitted ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              <Check className="w-4 h-4" />
-              Confirm
-            </button>
-            <button
-              onClick={() => handleConfirmation(false)}
-              disabled={isSubmitted}
-              className={`flex-1 px-4 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded font-medium flex items-center justify-center gap-2 ${
-                isSubmitted ? "opacity-50 cursor-not-allowed" : ""
-              }`}
-            >
-              <X className="w-4 h-4" />
-              Cancel
-            </button>
+          <div className="space-y-3">
+            {/* Show tool approval details if available */}
+            {isToolApproval && (codePreview.length > 0 || requiredTools.length > 0) && (
+              <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm">
+                {requiredTools.length > 0 && (
+                  <div className="mb-2">
+                    <span className="font-semibold text-amber-900">Tools requiring approval:</span>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {requiredTools.map((tool: string, idx: number) => (
+                        <span key={idx} className="inline-block bg-amber-100 text-amber-800 px-2 py-0.5 rounded text-xs font-mono">
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {codePreview.length > 0 && (
+                  <div>
+                    <span className="font-semibold text-amber-900">Code Preview:</span>
+                    <pre className="mt-1 bg-gray-800 text-green-400 p-3 rounded text-xs overflow-x-auto font-mono border border-gray-700">
+                      {codePreview.join('\n')}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            {/* Confirmation buttons */}
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleConfirmation(true)}
+                disabled={isSubmitted}
+                className={`flex-1 px-4 py-3 ${
+                  isToolApproval 
+                    ? "bg-amber-500 hover:bg-amber-600" 
+                    : "bg-green-500 hover:bg-green-600"
+                } text-white rounded font-medium flex items-center justify-center gap-2 ${
+                  isSubmitted ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+              >
+                <Check className="w-4 h-4" />
+                {isToolApproval ? "Approve & Execute" : "Confirm"}
+              </button>
+              <button
+                onClick={() => handleConfirmation(false)}
+                disabled={isSubmitted}
+                className={`flex-1 px-4 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded font-medium flex items-center justify-center gap-2 ${
+                  isSubmitted ? "opacity-50 cursor-not-allowed" : ""
+                }`}
+              >
+                <X className="w-4 h-4" />
+                {isToolApproval ? "Deny" : "Cancel"}
+              </button>
+            </div>
           </div>
         );
 

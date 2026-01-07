@@ -43,6 +43,7 @@ STOP_ENDPOINT = f"{SERVER_URL}/stop"
 os.environ["MCP_SERVERS_FILE"] = os.path.join(os.path.dirname(__file__), "config", "mcp_servers.yaml")
 os.environ["CUGA_TEST_ENV"] = "true"
 os.environ["DYNACONF_ADVANCED_FEATURES__TRACKER_ENABLED"] = "true"
+os.environ["DYNACONF_POLICY__ENABLED"] = "false"
 
 
 def get_preexec_fn():

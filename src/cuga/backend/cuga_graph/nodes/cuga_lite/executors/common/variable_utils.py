@@ -110,6 +110,35 @@ class VariableUtils:
         return reordered_vars
 
     @staticmethod
+    def limit_variables_to_keep(new_vars: dict[str, Any], keep_last_n: int) -> dict[str, Any]:
+        """Limit the number of variables to keep, keeping only the last N variables.
+
+        Args:
+            new_vars: Dictionary of variables (preserves insertion order)
+            keep_last_n: Number of variables to keep:
+                        -1 or 0 = keep all variables
+                        N > 0 = keep only the last N variables
+
+        Returns:
+            Dictionary with limited variables (last N if keep_last_n > 0, all if keep_last_n <= 0)
+        """
+        if not new_vars:
+            return new_vars
+
+        # Keep all if keep_last_n is -1 or 0
+        if keep_last_n <= 0:
+            return new_vars
+
+        # Convert to list to preserve order, then take last N
+        var_items = list(new_vars.items())
+        if len(var_items) <= keep_last_n:
+            return new_vars
+
+        # Keep only the last N variables
+        limited_items = var_items[-keep_last_n:]
+        return dict(limited_items)
+
+    @staticmethod
     def add_variables_to_manager(new_vars: dict[str, Any], var_manager, result: str) -> str:
         """Add new variables to VariablesManager and append summary to result.
 

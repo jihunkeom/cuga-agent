@@ -146,10 +146,14 @@ class TestSDKStreamIntegration:
         # Verify we got multiple state updates
         assert len(states) > 0
 
-        # Check that we have different node outputs
+        # Check that we have different node outputs (handle new tuple format)
         node_names = set()
         for state in states:
-            node_names.update(state.keys())
+            if isinstance(state, tuple) and len(state) == 2:
+                _, updates_dict = state
+                node_names.update(updates_dict.keys())
+            elif isinstance(state, dict):
+                node_names.update(state.keys())
 
         # Should have prepare, call_model, and possibly sandbox nodes
         assert len(node_names) > 0
@@ -157,9 +161,15 @@ class TestSDKStreamIntegration:
         # Find the final state with answer
         final_answer = None
         for state in states:
-            for node_state in state.values():
-                if isinstance(node_state, dict) and "final_answer" in node_state:
-                    final_answer = node_state["final_answer"]
+            if isinstance(state, tuple) and len(state) == 2:
+                _, updates_dict = state
+                for node_name, node_state in updates_dict.items():
+                    if isinstance(node_state, dict) and "final_answer" in node_state:
+                        final_answer = node_state["final_answer"]
+            elif isinstance(state, dict):
+                for node_state in state.values():
+                    if isinstance(node_state, dict) and "final_answer" in node_state:
+                        final_answer = node_state["final_answer"]
 
         # Verify final answer contains result
         assert final_answer is not None
@@ -172,10 +182,19 @@ class TestSDKStreamIntegration:
 
         code_blocks = []
         async for state in agent.stream("Calculate 6 * 7"):
-            for node_state in state.values():
-                if isinstance(node_state, dict) and "script" in node_state:
-                    if node_state["script"]:
-                        code_blocks.append(node_state["script"])
+            # With stream_mode="updates" and subgraphs=True, format is (namespace_tuple, updates_dict)
+            if isinstance(state, tuple) and len(state) == 2:
+                _, updates_dict = state
+                for node_name, node_state in updates_dict.items():
+                    if isinstance(node_state, dict) and "script" in node_state:
+                        if node_state["script"]:
+                            code_blocks.append(node_state["script"])
+            # Fallback for old format (dict)
+            elif isinstance(state, dict):
+                for node_state in state.values():
+                    if isinstance(node_state, dict) and "script" in node_state:
+                        if node_state["script"]:
+                            code_blocks.append(node_state["script"])
 
         # Verify we observed code being generated
         assert len(code_blocks) > 0

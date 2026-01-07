@@ -48,12 +48,20 @@ from cuga.backend.cuga_graph.nodes.cuga_lite.cuga_lite_graph import (
     create_cuga_lite_graph,
 )
 from cuga.backend.cuga_graph.nodes.cuga_lite.combined_tool_provider import CombinedToolProvider
+from cuga.backend.cuga_graph.nodes.cuga_lite.tool_provider_interface import ToolProviderInterface
+from cuga.backend.cuga_graph.policy.configurable import PolicyConfigurable
 from cuga.backend.llm.models import LLMManager
 from cuga.config import settings
 
 
 class DynamicAgentGraph:
-    def __init__(self, configurations, langfuse_handler=None):
+    def __init__(
+        self,
+        configurations,
+        langfuse_handler=None,
+        policy_system: Optional[PolicyConfigurable] = None,
+        tool_provider: Optional[ToolProviderInterface] = None,
+    ):
         self.task_decomposition_agent = TaskDecompositionNode(TaskDecompositionAgent.create())
         self.plan_controller_agent = PlanControllerNode(PlanControllerAgent.create())
         self.final_answer_agent = FinalAnswerNode(FinalAnswerAgent.create())
@@ -72,16 +80,40 @@ class DynamicAgentGraph:
         self.api_coder = ApiCoder(CodeAgent.create())
         self.cuga_lite = CugaLiteNode(langfuse_handler=langfuse_handler)
         self.langfuse_handler = langfuse_handler
+        self.policy_system = policy_system or PolicyConfigurable.get_instance()
+        self.tool_provider = tool_provider
         self.graph = None
 
     async def build_graph(self):
         graph = StateGraph(AgentState)
         await self.add_nodes(graph)
         self.add_edges(graph)
+
+        # Compile with policy_system in configurable
         self.graph = graph.compile(
             checkpointer=MemorySaver(),
             interrupt_after=[self.action_agent.action_agent.name, self.interrupt_tool_node.name],
         )
+
+        # Store policy_system for passing to config
+        self._policy_system = self.policy_system
+
+    def get_config_with_policy(self, base_config: dict = None) -> dict:
+        """
+        Get config dict with policy_system included in configurable.
+
+        Args:
+            base_config: Base configuration dict to merge with
+
+        Returns:
+            Config dict with policy_system in configurable
+        """
+        config = base_config or {}
+        if "configurable" not in config:
+            config["configurable"] = {}
+
+        config["configurable"]["policy_system"] = self.policy_system
+        return config
 
     async def add_nodes(self, graph):
         self.chat = await ChatNode.create()
@@ -112,7 +144,8 @@ class DynamicAgentGraph:
         graph.add_node(self.cuga_lite.name, self.cuga_lite.node)
 
         # Create and add CugaLite subgraph
-        tool_provider = CombinedToolProvider()
+        # Use provided tool provider or create default CombinedToolProvider
+        tool_provider = self.tool_provider or CombinedToolProvider()
         await tool_provider.initialize()
 
         # Get apps for apps_list
@@ -126,6 +159,11 @@ class DynamicAgentGraph:
         model = llm_manager.get_model(model_config)
 
         # Create the CugaLite subgraph (tools will be fetched dynamically from tool_provider)
+        # Note: This subgraph is created at build time (before any invocation).
+        # The policy_system is NOT passed here because it's accessed at runtime via
+        # config["configurable"]["policy_system"]. When the main graph invokes this
+        # subgraph node, LangGraph automatically passes the config down to the subgraph's
+        # nodes (prepare_tools_and_apps), where PolicyEnactment.check_and_enact() extracts it.
         cuga_lite_subgraph = create_cuga_lite_graph(
             model=model,
             prompt=None,  # Will be created dynamically from state
@@ -135,6 +173,7 @@ class DynamicAgentGraph:
         )
 
         # Compile and add as a subgraph node
+        # The compiled subgraph will receive config from parent graph at runtime
         compiled_cuga_lite_subgraph = cuga_lite_subgraph.compile()
         graph.add_node("CugaLiteSubgraph", compiled_cuga_lite_subgraph)
 

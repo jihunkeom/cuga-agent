@@ -33,6 +33,7 @@ class ActionIds:
     FLOW_APPROVE = "flow_approve"
     NEW_FLOW_APPROVE = "new_flow_approve"
     CONSULT_WITH_HUMAN = "consult_with_human"
+    TOOL_APPROVAL = "tool_approval"
 
 
 # Message Prefixes

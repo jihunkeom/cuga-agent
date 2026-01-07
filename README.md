@@ -27,6 +27,21 @@ Building a domain-specific enterprise agent from scratch is complex and requires
 
 </div>
 
+---
+
+> **🎉 NEW: CUGA Enterprise SDK with Policy System** — Build production-ready AI agents with enterprise-grade governance. Programmatically configure safety guards, workflow controls, and compliance policies via Python SDK or visual UI. Ensure consistent, secure, and compliant agent behavior across your organization.
+>
+> **Policy Types & Enterprise Value:**
+>
+> | Policy Type | Value | Use Cases |
+> |------------|-------|-----------|
+> | **Intent Guard** | Block unauthorized actions | Data deletion prevention, access restrictions, compliance enforcement |
+> | **Playbook** | Standardize workflows | Onboarding, audit workflows, regulatory compliance |
+> | **Tool Approval** | Human oversight | Financial transactions, data modifications |
+> | **Tool Guide** | Domain knowledge | Compliance notes, domain context |
+> | **Output Formatter** | Format, redirect, govern outputs | report generation, response routing |
+>
+> 📚 **Documentation**: [SDK Guide](https://docs.cuga.dev/docs/sdk/cuga_agent/) | [Policies Guide](https://docs.cuga.dev/docs/sdk/policies/) | [Quick Start →](#-using-cuga-as-a-python-sdk)
 
 ## Why CUGA?
 
@@ -49,7 +64,7 @@ CUGA achieves state-of-the-art performance on leading benchmarks:
 
 - **Open-source and composable** — Built with modularity in mind, CUGA itself can be exposed as a tool to other agents, enabling nested reasoning and multi-agent collaboration. Evolving toward enterprise-grade reliability
 
-- **Configurable policy and human-in-the-loop instructions** _(Experimental)_ — Configure policy-aware instructions and approval gates to improve alignment and ensure safe agent behavior in enterprise contexts
+- **Policy System** — Configure agent behavior with 5 policy types (Intent Guard, Playbook, Tool Approval, Tool Guide, Output Formatter) via the Python SDK or standalone UI in demo mode. Includes human-in-the-loop approval gates for safe agent behavior in enterprise contexts. See [SDK Docs](https://docs.cuga.dev/docs/sdk/cuga_agent/) and [Policies Guide](https://docs.cuga.dev/docs/sdk/policies/)
 
 - **Save-and-reuse capabilities** _(Experimental)_ — Capture and reuse successful execution paths (plans, code, and trajectories) for faster and consistent behavior across repeated tasks
 
@@ -208,41 +223,6 @@ cuga viz
 
 ```
 
-## 📦 Using CUGA as a Python SDK
-
-CUGA can be easily integrated into your Python applications as a library. The SDK provides a clean, minimal API for creating and invoking agents with custom tools.
-
-### Quick Start
-
-```python
-from cuga import CugaAgent
-from langchain_core.tools import tool
-
-@tool
-def add_numbers(a: int, b: int) -> int:
-    '''Add two numbers together'''
-    return a + b
-
-# Create and invoke the agent
-agent = CugaAgent(tools=[add_numbers])
-result = await agent.invoke("What is 10 + 5?")
-print(result)  # "15"
-```
-
-### Key Features
-
-- **Simple API**: `CugaAgent(tools=[...])` → `await agent.invoke(message)`
-- **Streaming**: Monitor execution in real-time with `agent.stream()`
-- **State Isolation**: Per-user sessions with `thread_id`
-- **LangGraph Integration**: Access underlying graph for advanced use cases
-- **Flexible Tools**: Direct tools or custom tool providers
-
-### More Examples
-
-- [Basic Usage](docs/examples/sdk_basic_usage.py) - Common patterns and use cases
-- [Streaming](docs/examples/sdk_streaming_example.py) - Real-time execution monitoring
-- [LangGraph Integration](docs/examples/sdk_langgraph_integration.py) - Advanced graph usage
-- [Integration Tests](tests/integration/test_sdk_integration.py) - Full test suite (16 passing tests)
 
 <details>
 <summary>🤖 LLM Configuration - Advanced Options</summary>
@@ -258,6 +238,7 @@ CUGA supports multiple LLM providers with flexible configuration options. You ca
 - **OpenAI** - GPT models via OpenAI API (also supports LiteLLM via base URL override)
 - **IBM WatsonX** - IBM's enterprise LLM platform
 - **Azure OpenAI** - Microsoft's Azure OpenAI service
+- **Groq** - High-performance inference platform with fast LLM models
 - **RITS** - Internal IBM research platform
 - **OpenRouter** - LLM API gateway provider
 
@@ -345,7 +326,28 @@ CUGA supports LiteLLM through the OpenAI configuration by overriding the base UR
    OPENAI_BASE_URL=https://your-litellm-endpoint.com  # Override base URL
    OPENAI_API_VERSION=2024-08-06        # Override API version
    ```
-### Option 5: OpenRouter Support
+### Option 5: Groq Support ⚡
+
+**Setup Instructions:**
+
+1. Create an account at [groq.com](https://groq.com)
+2. Generate an API key from your [API keys page](https://console.groq.com/keys)
+3. Add to your `.env` file:
+   ```env
+   # Groq Configuration
+   GROQ_API_KEY=your-groq-api-key-here
+   AGENT_SETTING_CONFIG="settings.groq.toml"
+   
+   # Optional override
+   MODEL_NAME=llama-3.1-70b-versatile  # Override model name
+   ```
+
+**Default Values:**
+
+- Model: Configured in `settings.groq.toml`
+- Base URL: Groq's default endpoint
+
+### Option 6: OpenRouter Support
 **Setup Instructions:**
 1. Create an account at [openrouter.ai](https://openrouter.ai)
 2. Generate an API key from your account settings
@@ -367,6 +369,7 @@ CUGA uses TOML configuration files located in `src/cuga/configurations/models/`:
 - `settings.openai.toml` - OpenAI configuration (also supports LiteLLM via base URL override)
 - `settings.watsonx.toml` - WatsonX configuration
 - `settings.azure.toml` - Azure OpenAI configuration
+- `settings.groq.toml` - Groq configuration
 - `settings.openrouter.toml` - OpenRouter configuration
 
 Each file contains agent-specific model settings that can be overridden by environment variables.
@@ -379,6 +382,93 @@ Each file contains agent-specific model settings that can be overridden by envir
 
 </div>
 
+
+
+## 📦 Using CUGA as a Python SDK 
+
+CUGA can be easily integrated into your Python applications as a library. The SDK provides a clean, minimal API for creating and invoking agents with custom tools.
+
+📚 **SDK Documentation**: [SDK Documentation](https://docs.cuga.dev/docs/sdk/cuga_agent/)
+
+### Quick Start
+
+```python
+from cuga import CugaAgent
+from langchain_core.tools import tool
+import asyncio
+
+@tool
+def add_numbers(a: int, b: int) -> int:
+    '''Add two numbers together'''
+    return a + b
+
+@tool
+def multiply_numbers(a: int, b: int) -> int:
+    '''Multiply two numbers together'''
+    return a * b
+
+# Create agent with tools
+agent = CugaAgent(tools=[add_numbers, multiply_numbers])
+
+
+async def main():
+    # Add an Intent Guard to block specific operations
+    await agent.policies.add_intent_guard(
+        name="Block Delete Operations",
+        description="Prevents deletion of critical data",
+        keywords=["delete", "remove", "erase"],
+        response="Deletion operations are not permitted for security reasons.",
+        priority=100  # Higher priority = checked first
+    )
+
+    # Add a Playbook to provide step-by-step guidance for complex workflows
+    await agent.policies.add_playbook(
+        name="Budget Analysis Workflow",
+        description="Multi-step process for analyzing financial budgets",
+        natural_language_trigger=["When user asks to analyze their budget"],
+        content="""# Budget Analysis Workflow
+
+    ## Step 1: Calculate Total Expenses
+    - Sum all expense categories using add_numbers
+    - Document each category amount
+
+    ## Step 2: Calculate Total Revenue
+    - Sum all revenue streams using add_numbers
+    - Include all income sources
+
+    ## Step 3: Calculate Profit Margin
+    - Use multiply_numbers to calculate profit (revenue - expenses)
+    - Calculate margin percentage
+
+    ## Step 4: Generate Recommendations
+    - Compare against target budget
+    - Identify areas for optimization
+    - Provide actionable insights""",
+        priority=50
+    )
+
+    result = await agent.invoke("Analyze my budget: expenses are 5000 and 3000, revenue is 12000")
+    print(result)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+### Key Features
+
+- **Simple API**: `CugaAgent(tools=[...])` → `await agent.invoke(message)`
+- **Streaming**: Monitor execution in real-time with `agent.stream()`
+- **State Isolation**: Per-user sessions with `thread_id`
+- **LangGraph Integration**: Access underlying graph for advanced use cases
+- **Flexible Tools**: Direct tools or custom tool providers
+- **Policy System**: Comprehensive policy framework with 5 types:
+  - **Intent Guard**: Block or modify specific user intents
+  - **Playbook**: Step-by-step guidance for complex workflows
+  - **Tool Approval**: Require human approval before executing tools
+  - **Tool Guide**: Enhance tool descriptions with additional context
+  - **Output Formatter**: Format agent responses based on triggers
+
+📚 **Documentation**: [SDK Guide](https://docs.cuga.dev/docs/sdk/cuga_agent/) | [Policies Guide](https://docs.cuga.dev/docs/sdk/policies/)
 
 ## Configurations
 
@@ -728,33 +818,45 @@ CUGA supports three types of tool integrations. Each approach has its own use ca
 
 ### Test Scenarios - E2E
 
-The test suite covers various execution modes across different scenarios:
-
-| Scenario                              | Fast Mode | Balanced Mode | Accurate Mode | Save & Reuse Mode |
-| ------------------------------------- | --------- | ------------- | ------------- | ----------------- |
-| **Find VP Sales High-Value Accounts** | ✓         | ✓             | ✓             | -                 |
-| **Get top account by revenue**        | ✓         | ✓             | ✓             | ✓                 |
-| **List my accounts**                  | ✓         | ✓             | ✓             | -                 |
-
-### Additional Test Categories
+All tests are available through `./src/scripts/run_tests.sh`:
 
 **Unit Tests**
+- Registry: OpenAPI integration, MCP server functionality, service configurations
+- Variables Manager: Core functionality, metadata handling, singleton pattern
+- Code Executors: Local sandbox and E2B lite execution
 
-- Variables Manager: Core functionality, metadata handling, singleton pattern, reset operations
-- Value Preview: Intelligent truncation, nested structure preservation, length-aware formatting
+**Policy Integration Tests** (`src/cuga/backend/cuga_graph/policy/tests/`)
+- Intent Guard: Blocking behavior, priority resolution, multiple guard scenarios
+- Playbook: Guidance injection, plan refinement, workflow execution
+- Tool Approval: Human-in-the-loop approval flows (approve/deny)
+- Tool Guide: Context enhancement and metadata injection
+- Output Formatter: Response formatting and routing
+- NL Trigger Conflict Resolution: Embedding-based similarity search with LLM conflict resolution
+- Embedding Similarity: Vector search, policy matching, threshold validation
+- Keyword Operators: AND/OR logic, case sensitivity, multi-keyword matching
 
-**Integration Tests**
+**SDK Integration Tests** (`src/cuga/sdk_core/tests/`)
+- SDK functionality: Agent invocation, streaming, tool integration
+- Policy management: Policy loading, matching, and execution via SDK
 
-- API Response Handling: Error cases, validation, timeout scenarios, parameter extraction
-- Registry Services: OpenAPI integration, MCP server functionality, mixed service configurations
-- Tool Environment: Service loading, parameter handling, function calling, isolation testing
+**Stability Tests** (`run_stability_tests.py`)
+- Fast Mode: Get top account by revenue, list accounts, find VP sales high-value accounts
+- CRM Workflows: Contacts management, email operations, tool discovery
+- HF Utterances: Account queries, revenue calculations, playbook execution
+- Execution: Supports local and Docker execution, parallel/sequential modes, cross-version testing
 
 ## 🧪 Running Tests
 
-Focused suites:
+Run all tests (unit, integration, and stability):
 
 ```bash
 ./src/scripts/run_tests.sh
+```
+
+Run unit tests only:
+
+```bash
+./src/scripts/run_tests.sh unit_tests
 ```
 
 ## 📊 Evaluation
