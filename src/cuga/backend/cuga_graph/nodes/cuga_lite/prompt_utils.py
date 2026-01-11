@@ -287,7 +287,24 @@ class PromptUtils:
             if hasattr(actual_tool, 'func') and hasattr(actual_tool.func, '_response_schemas'):
                 response_schemas = actual_tool.func._response_schemas
                 if response_schemas and isinstance(response_schemas, dict) and 'success' in response_schemas:
-                    output_schema = response_schemas['success']
+                    raw_output_schema = response_schemas['success']
+                    # Ensure output_schema is always a dict
+                    if isinstance(raw_output_schema, list):
+                        # If it's a list, wrap it in a proper JSON schema format
+                        if len(raw_output_schema) > 0 and isinstance(raw_output_schema[0], dict):
+                            # List of objects - create array schema with items
+                            output_schema = {"type": "array", "items": raw_output_schema[0]}
+                        else:
+                            # List of primitives - create array schema
+                            output_schema = {
+                                "type": "array",
+                                "items": raw_output_schema[0] if raw_output_schema else {},
+                            }
+                    elif isinstance(raw_output_schema, dict):
+                        output_schema = raw_output_schema
+                    else:
+                        # Fallback for other types
+                        output_schema = {"value": raw_output_schema} if raw_output_schema is not None else {}
 
             # Use model_dump with by_alias=True to ensure proper field names
             enriched_tool = Tool(

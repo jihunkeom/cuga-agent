@@ -472,7 +472,7 @@ class CugaLiteNode(BaseNode):
         """
         logger.info("Processing CugaLite execution results")
         logger.info(f"Answer: {answer[:200] if answer else 'None'}...")
-
+        is_autonomous_subtask = state.sub_task is not None and state.sub_task.strip() != ""
         # Check for errors
         has_error = self._has_error(answer)
         if has_error:

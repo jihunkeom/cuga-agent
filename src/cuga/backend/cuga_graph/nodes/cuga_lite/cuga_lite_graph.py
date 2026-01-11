@@ -557,7 +557,8 @@ def create_cuga_lite_graph(
                 logger.info(f"Auto-enabling find_tools: {tool_count} tools exceeds threshold of {threshold}")
 
             # Prepare prompt
-            is_autonomous_subtask = bool(state.sub_task)
+            is_autonomous_subtask = state.sub_task is not None and state.sub_task.strip() != ""
+
             # TODO: Add task loaded from file support this happens when we load file as playboook
             task_loaded_from_file = False  # Not used in current flow
 

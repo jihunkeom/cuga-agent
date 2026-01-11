@@ -39,7 +39,7 @@ Building a domain-specific enterprise agent from scratch is complex and requires
 > | **Playbook** | Standardize workflows | Onboarding, audit workflows, regulatory compliance |
 > | **Tool Approval** | Human oversight | Financial transactions, data modifications |
 > | **Tool Guide** | Domain knowledge | Compliance notes, domain context |
-> | **Output Formatter** | Format, redirect, govern outputs | report generation, response routing |
+> | **Output Formatter** | Format, redirect, govern outputs | report generation, response routing, output masking |
 >
 > 📚 **Documentation**: [SDK Guide](https://docs.cuga.dev/docs/sdk/cuga_agent/) | [Policies Guide](https://docs.cuga.dev/docs/sdk/policies/) | [Quick Start →](#-using-cuga-as-a-python-sdk)
 
